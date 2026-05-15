@@ -1,130 +1,18 @@
-
-import { useState } from 'react'
-
-export default function App() {
-  const [clients, setClients] = useState([])
-
-  const [form, setForm] = useState({
-    name: '',
-    phone: '',
-    employer: '',
-    salary: '',
-    expenses: '',
-    loan: ''
-  })
-
-  const disposable = Number(form.salary || 0) - Number(form.expenses || 0)
-  const approved = disposable >= Number(form.loan || 0)
-
-  function saveClient() {
-    setClients([...clients, form])
-    setForm({
-      name: '',
-      phone: '',
-      employer: '',
-      salary: '',
-      expenses: '',
-      loan: ''
-    })
-  }
-
-  return (
-    <div style={{fontFamily:'Arial',background:'#f4f6f4',minHeight:'100vh',padding:'30px'}}>
-      <div style={{background:'#063d27',padding:'20px',borderRadius:'15px',color:'white'}}>
-        <h1 style={{color:'#c9a23f'}}>JPrime Finance</h1>
-        <p>Loan Management Application</p>
-      </div>
-
-      <div style={{background:'white',padding:'20px',borderRadius:'15px',marginTop:'20px'}}>
-        <h2>Client Capture</h2>
-
-        <input style={inputStyle} placeholder="Client Name"
-          value={form.name}
-          onChange={e=>setForm({...form,name:e.target.value})}
-        />
-
-        <input style={inputStyle} placeholder="Phone Number"
-          value={form.phone}
-          onChange={e=>setForm({...form,phone:e.target.value})}
-        />
-
-        <input style={inputStyle} placeholder="Employer"
-          value={form.employer}
-          onChange={e=>setForm({...form,employer:e.target.value})}
-        />
-
-        <input style={inputStyle} placeholder="Net Salary"
-          value={form.salary}
-          onChange={e=>setForm({...form,salary:e.target.value})}
-        />
-
-        <input style={inputStyle} placeholder="Monthly Expenses"
-          value={form.expenses}
-          onChange={e=>setForm({...form,expenses:e.target.value})}
-        />
-
-        <input style={inputStyle} placeholder="Requested Loan"
-          value={form.loan}
-          onChange={e=>setForm({...form,loan:e.target.value})}
-        />
-
-        <div style={{
-          background: approved ? '#d9ead3' : '#f4cccc',
-          padding:'12px',
-          borderRadius:'10px',
-          fontWeight:'bold'
-        }}>
-          {approved ? 'APPROVED' : 'DECLINED'}
-        </div>
-
-        <button style={buttonStyle} onClick={saveClient}>
-          Save Client
-        </button>
-      </div>
-
-      <div style={{background:'white',padding:'20px',borderRadius:'15px',marginTop:'20px'}}>
-        <h2>Client Logs</h2>
-
-        <table width="100%" cellPadding="10">
-          <thead style={{background:'#063d27',color:'white'}}>
-            <tr>
-              <th>Name</th>
-              <th>Phone</th>
-              <th>Employer</th>
-              <th>Loan</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {clients.map((client,index)=>(
-              <tr key={index}>
-                <td>{client.name}</td>
-                <td>{client.phone}</td>
-                <td>{client.employer}</td>
-                <td>R {client.loan}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-const inputStyle = {
-  width:'100%',
-  padding:'12px',
-  marginBottom:'10px',
-  border:'1px solid #ccc',
-  borderRadius:'8px'
-}
-
-const buttonStyle = {
-  background:'#063d27',
-  color:'white',
-  padding:'12px 20px',
-  border:'none',
-  borderRadius:'10px',
-  cursor:'pointer',
-  marginTop:'10px'
+{
+  "name": "jprime-finance-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.0.0",
+    "vite": "^5.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {}
 }
