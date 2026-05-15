@@ -119,25 +119,24 @@ export default function App() {
   }
 
   function saveClient() {
-    const record = {
-      ...form,
-      clientNo: form.clientNo || `JP-${String(clients.length + 1).padStart(4, '0')}`
-    }
+  const exists = clients.some(client => client.clientNo === form.clientNo)
 
-    setClients([record, ...clients])
-    setSelectedClientNo(record.clientNo)
-
-    const nextNumber = clients.length + 2
-
-    setForm({
-      ...emptyClient,
-      clientNo: `JP-${String(nextNumber).padStart(4, '0')}`,
-      loanDate: today(),
-      dueDate: plus30(today())
-    })
-
-    setActiveTab('logs')
+  if (exists) {
+    setClients(clients.map(client =>
+      client.clientNo === form.clientNo ? form : client
+    ))
+  } else {
+    setClients([form, ...clients])
   }
+
+  setSelectedClientNo(form.clientNo)
+  setActiveTab('logs')
+}
+  function editClient(client) {
+  setForm(client)
+  setSelectedClientNo(client.clientNo)
+  setActiveTab('capture')
+}
 
   function updatePayment(clientNo, amountPaid) {
     setClients(clients.map(client =>
