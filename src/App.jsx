@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 
-const RATE = 0.35
+const RATE = 0.40
 
 const emptyClient = {
   clientNo: '',
@@ -33,6 +33,7 @@ const emptyClient = {
   debicheckStatus: 'Pending',
   mandateRef: '',
   employerVerified: 'Pending',
+  bureauStatus: 'Not Checked',
   notes: ''
 }
 
@@ -53,16 +54,21 @@ function plus30(date) {
   return d.toISOString().slice(0, 10)
 }
 
+function nextClientNo(clients) {
+  return `JP-${String(clients.length + 1).padStart(4, '0')}`
+}
+
 export default function App() {
   const [clients, setClients] = useState([])
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [selectedClientNo, setSelectedClientNo] = useState('')
+
   const [form, setForm] = useState({
     ...emptyClient,
     clientNo: 'JP-0001',
     loanDate: today(),
     dueDate: plus30(today())
   })
-  const [selectedClientNo, setSelectedClientNo] = useState('')
 
   function update(field, value) {
     const updated = { ...form, [field]: value }
@@ -98,7 +104,6 @@ export default function App() {
       client.debicheckStatus === 'Verified'
 
     const affordabilityOk = disposable >= totalRepayable
-
     const loanRangeOk = loanAmount >= 1000 && loanAmount <= 4000
 
     const approved =
@@ -119,24 +124,41 @@ export default function App() {
   }
 
   function saveClient() {
-  const exists = clients.some(client => client.clientNo === form.clientNo)
+    const exists = clients.some(client => client.clientNo === form.clientNo)
 
-  if (exists) {
-    setClients(clients.map(client =>
-      client.clientNo === form.clientNo ? form : client
-    ))
-  } else {
-    setClients([form, ...clients])
+    if (exists) {
+      setClients(clients.map(client =>
+        client.clientNo === form.clientNo ? form : client
+      ))
+    } else {
+      setClients([form, ...clients])
+    }
+
+    setSelectedClientNo(form.clientNo)
+    setActiveTab('logs')
   }
 
-  setSelectedClientNo(form.clientNo)
-  setActiveTab('logs')
-}
+  function newClient() {
+    setForm({
+      ...emptyClient,
+      clientNo: nextClientNo(clients),
+      loanDate: today(),
+      dueDate: plus30(today())
+    })
+    setSelectedClientNo('')
+    setActiveTab('capture')
+  }
+
   function editClient(client) {
-  setForm(client)
-  setSelectedClientNo(client.clientNo)
-  setActiveTab('capture')
-}
+    setForm(client)
+    setSelectedClientNo(client.clientNo)
+    setActiveTab('capture')
+  }
+
+  function selectClient(clientNo) {
+    setSelectedClientNo(clientNo)
+    setActiveTab('agreement')
+  }
 
   function updatePayment(clientNo, amountPaid) {
     setClients(clients.map(client =>
@@ -148,6 +170,16 @@ export default function App() {
 
   function deleteClient(clientNo) {
     setClients(clients.filter(client => client.clientNo !== clientNo))
+    if (selectedClientNo === clientNo) {
+      setSelectedClientNo('')
+    }
+  }
+
+  function openExperian() {
+    window.open(
+      'https://www.experian.co.za/consumer/my-free-credit-check-and-your-free-credit-report',
+      '_blank'
+    )
   }
 
   const selectedClient =
@@ -209,12 +241,21 @@ export default function App() {
       {activeTab === 'dashboard' && (
         <section style={card}>
           <h2>Dashboard</h2>
+
           <div style={grid4}>
             <Stat title="Total Clients" value={dashboard.totalClients} />
             <Stat title="Approved" value={dashboard.approved} />
             <Stat title="Declined" value={dashboard.declined} />
             <Stat title="Outstanding" value={money(dashboard.outstanding)} />
           </div>
+
+          <button style={primaryButton} onClick={newClient}>
+            New Client Application
+          </button>
+
+          <button style={goldButton} onClick={openExperian}>
+            Open Free Experian Credit Report
+          </button>
         </section>
       )}
 
@@ -250,7 +291,9 @@ export default function App() {
           <DecisionBox calc={c} />
 
           <button style={primaryButton} onClick={saveClient}>
-            Save Client
+            {clients.some(client => client.clientNo === form.clientNo)
+              ? 'Update Client'
+              : 'Save Client'}
           </button>
         </section>
       )}
@@ -277,7 +320,7 @@ export default function App() {
 
       {activeTab === 'banking' && (
         <section style={card}>
-          <h2>Banking, DebiCheck & Employer Verification</h2>
+          <h2>Banking, DebiCheck, Employer & Bureau Verification</h2>
 
           <div style={grid2}>
             <Field label="Bank Name" value={form.bankName} onChange={v => update('bankName', v)} />
@@ -308,7 +351,22 @@ export default function App() {
               onChange={v => update('employerVerified', v)}
               options={['Pending', 'Verified', 'Failed']}
             />
+
+            <SelectField
+              label="Credit Bureau Status"
+              value={form.bureauStatus}
+              onChange={v => update('bureauStatus', v)}
+              options={['Not Checked', 'Client Report Received', 'Clear', 'Risky', 'Declined']}
+            />
           </div>
+
+          <button style={goldButton} onClick={openExperian}>
+            Open Free Experian Credit Report
+          </button>
+
+          <p style={smallText}>
+            Note: The client must access and share their own bureau report or give proper written consent.
+          </p>
         </section>
       )}
 
@@ -346,10 +404,15 @@ export default function App() {
                       </span>
                     </td>
                     <td>
-                      <button onClick={() => setSelectedClientNo(client.clientNo)}>
-                        Select
+                      <button style={editButton} onClick={() => editClient(client)}>
+                        Edit
                       </button>
-                      <button onClick={() => deleteClient(client.clientNo)}>
+
+                      <button style={selectButton} onClick={() => selectClient(client.clientNo)}>
+                        Agreement
+                      </button>
+
+                      <button style={deleteButton} onClick={() => deleteClient(client.clientNo)}>
                         Delete
                       </button>
                     </td>
@@ -465,7 +528,7 @@ function DecisionBox({ calc }) {
       <h3>{calc.approved ? 'APPROVED' : 'DECLINED'}</h3>
       <p>Total Expenses: {money(calc.totalExpenses)}</p>
       <p>Disposable Income: {money(calc.disposable)}</p>
-      <p>Service Fee 35%: {money(calc.fee)}</p>
+      <p>Service Fee 40%: {money(calc.fee)}</p>
       <p>Total Repayable: {money(calc.totalRepayable)}</p>
     </div>
   )
@@ -484,9 +547,13 @@ function Agreement({ client, calc }) {
       <p><b>Cell:</b> {client.phone}</p>
       <p><b>Employer:</b> {client.employer}</p>
       <p><b>Loan Amount:</b> {money(client.loanAmount)}</p>
-      <p><b>Service Fee 35%:</b> {money(calc.fee)}</p>
+      <p><b>Service Fee 40%:</b> {money(calc.fee)}</p>
       <p><b>Total Repayable:</b> {money(calc.totalRepayable)}</p>
       <p><b>Repayment Date:</b> {client.dueDate}</p>
+      <p><b>Bank:</b> {client.bankName}</p>
+      <p><b>Account Number:</b> {client.accountNumber}</p>
+      <p><b>DebiCheck Status:</b> {client.debicheckStatus}</p>
+      <p><b>Mandate Ref:</b> {client.mandateRef}</p>
 
       <p>
         The Borrower agrees to repay the total amount on or before the repayment date.
@@ -594,8 +661,21 @@ const input = {
 
 const primaryButton = {
   marginTop: 20,
+  marginRight: 10,
   background: '#063d27',
   color: 'white',
+  padding: '12px 20px',
+  border: 'none',
+  borderRadius: 10,
+  cursor: 'pointer',
+  fontWeight: 'bold'
+}
+
+const goldButton = {
+  marginTop: 20,
+  marginRight: 10,
+  background: '#c9a23f',
+  color: '#000',
   padding: '12px 20px',
   border: 'none',
   borderRadius: 10,
@@ -650,8 +730,43 @@ const declinedBadge = {
   borderRadius: 8
 }
 
+const editButton = {
+  background: '#063d27',
+  color: 'white',
+  border: 'none',
+  padding: '8px 12px',
+  borderRadius: 8,
+  marginRight: 6,
+  cursor: 'pointer'
+}
+
+const selectButton = {
+  background: '#c9a23f',
+  color: '#000',
+  border: 'none',
+  padding: '8px 12px',
+  borderRadius: 8,
+  marginRight: 6,
+  cursor: 'pointer'
+}
+
+const deleteButton = {
+  background: '#b00020',
+  color: 'white',
+  border: 'none',
+  padding: '8px 12px',
+  borderRadius: 8,
+  cursor: 'pointer'
+}
+
 const agreementBox = {
   border: '1px solid #ccc',
   borderRadius: 15,
   padding: 25
+}
+
+const smallText = {
+  fontSize: 12,
+  color: '#555',
+  marginTop: 10
 }
