@@ -176,19 +176,16 @@ export default function App() {
     setAuthMessage('')
     setLoading(true)
 
-    let result
-
-    if (authMode === 'login') {
-      result = await supabase.auth.signInWithPassword({
-        email: authEmail,
-        password: authPassword
-      })
-    } else {
-      result = await supabase.auth.signUp({
-        email: authEmail,
-        password: authPassword
-      })
-    }
+    const result =
+      authMode === 'login'
+        ? await supabase.auth.signInWithPassword({
+            email: authEmail,
+            password: authPassword
+          })
+        : await supabase.auth.signUp({
+            email: authEmail,
+            password: authPassword
+          })
 
     if (result.error) {
       setAuthMessage(result.error.message)
@@ -348,6 +345,7 @@ export default function App() {
 
   async function updatePayment(client, amountPaid) {
     const updated = { ...client, amountPaid }
+
     const { error } = await supabase
       .from('clients')
       .update(toDb(updated, session.user.id))
@@ -412,41 +410,49 @@ export default function App() {
 
   if (!session) {
     return (
-      <div style={loginPage}>
+      <div style={loginBackground}>
         <div style={loginCard}>
-          <h1 style={title}>JPrime Finance</h1>
-          <h2>{authMode === 'login' ? 'Secure Login' : 'Create Staff Account'}</h2>
+          <div style={logoCircle}>JP</div>
 
-          <input
-            style={input}
-            placeholder="Email address"
-            value={authEmail}
-            onChange={e => setAuthEmail(e.target.value)}
-          />
+          <h1 style={loginTitle}>JPrime Finance</h1>
+          <p style={loginSubtitle}>Secure Loan Management Platform</p>
 
-          <input
-            style={input}
-            placeholder="Password"
-            type="password"
-            value={authPassword}
-            onChange={e => setAuthPassword(e.target.value)}
-          />
+          <h2 style={loginHeading}>
+            {authMode === 'login' ? 'Secure Login' : 'Create Staff Account'}
+          </h2>
 
-          <button style={primaryButton} onClick={handleAuth} disabled={loading}>
-            {loading ? 'Please wait...' : authMode === 'login' ? 'Login' : 'Create Account'}
-          </button>
+          <div style={loginFields}>
+            <input
+              style={loginInput}
+              placeholder="Email address"
+              value={authEmail}
+              onChange={e => setAuthEmail(e.target.value)}
+            />
 
-          <button
-            style={goldButton}
-            onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
-          >
-            {authMode === 'login' ? 'Create New Staff Account' : 'Back to Login'}
-          </button>
+            <input
+              style={loginInput}
+              placeholder="Password"
+              type="password"
+              value={authPassword}
+              onChange={e => setAuthPassword(e.target.value)}
+            />
 
-          {authMessage && <p>{authMessage}</p>}
+            <button style={loginButton} onClick={handleAuth} disabled={loading}>
+              {loading ? 'Please wait...' : authMode === 'login' ? 'Login Securely' : 'Create Account'}
+            </button>
 
-          <p style={smallText}>
-            Protected access enabled. Client data is stored in Supabase.
+            <button
+              style={signupButton}
+              onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+            >
+              {authMode === 'login' ? 'Create New Staff Account' : 'Back to Login'}
+            </button>
+          </div>
+
+          {authMessage && <p style={authNotice}>{authMessage}</p>}
+
+          <p style={loginFooter}>
+            Protected access enabled. Client information is stored securely in Supabase cloud infrastructure.
           </p>
         </div>
       </div>
@@ -736,9 +742,116 @@ function Agreement({ client, calc }) {
   )
 }
 
+const loginBackground = {
+  minHeight: '100vh',
+  display: 'flex',
+  justifyContent: 'center',
+  alignItems: 'center',
+  background:
+    'linear-gradient(135deg, rgba(2,44,26,0.95), rgba(0,0,0,0.82)), radial-gradient(circle at top left, #c9a23f 0, transparent 35%), radial-gradient(circle at bottom right, #0b6b3a 0, transparent 35%)',
+  backgroundColor: '#063d27',
+  padding: 25,
+  fontFamily: 'Arial'
+}
+
+const loginCard = {
+  width: '100%',
+  maxWidth: 520,
+  background: 'rgba(255,255,255,0.13)',
+  backdropFilter: 'blur(18px)',
+  border: '1px solid rgba(255,255,255,0.22)',
+  borderRadius: 28,
+  padding: 45,
+  boxShadow: '0 25px 80px rgba(0,0,0,0.45)',
+  color: 'white'
+}
+
+const logoCircle = {
+  width: 70,
+  height: 70,
+  borderRadius: '50%',
+  background: '#c9a23f',
+  color: '#063d27',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: 26,
+  fontWeight: 'bold',
+  marginBottom: 20
+}
+
+const loginTitle = {
+  fontSize: 44,
+  margin: 0,
+  color: '#c9a23f',
+  fontWeight: 800
+}
+
+const loginSubtitle = {
+  marginTop: 8,
+  color: '#e8e8e8',
+  fontSize: 15
+}
+
+const loginHeading = {
+  fontSize: 30,
+  marginTop: 35,
+  marginBottom: 22
+}
+
+const loginFields = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 15
+}
+
+const loginInput = {
+  padding: 16,
+  borderRadius: 14,
+  border: '1px solid rgba(255,255,255,0.25)',
+  background: 'rgba(255,255,255,0.12)',
+  color: 'white',
+  fontSize: 16,
+  outline: 'none'
+}
+
+const loginButton = {
+  background: '#063d27',
+  color: 'white',
+  padding: 16,
+  border: 'none',
+  borderRadius: 14,
+  cursor: 'pointer',
+  fontWeight: 'bold',
+  fontSize: 16
+}
+
+const signupButton = {
+  background: '#c9a23f',
+  color: '#000',
+  padding: 16,
+  border: 'none',
+  borderRadius: 14,
+  cursor: 'pointer',
+  fontWeight: 'bold',
+  fontSize: 16
+}
+
+const authNotice = {
+  marginTop: 18,
+  background: 'rgba(255,255,255,0.15)',
+  padding: 12,
+  borderRadius: 10
+}
+
+const loginFooter = {
+  marginTop: 25,
+  color: '#ddd',
+  fontSize: 13,
+  lineHeight: 1.6
+}
+
 const page = { fontFamily: 'Arial', background: '#f4f6f4', minHeight: '100vh', padding: 25 }
-const loginPage = { ...page, display: 'flex', justifyContent: 'center', alignItems: 'center' }
-const loginCard = { background: 'white', padding: 30, borderRadius: 18, width: 420, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }
 const header = { background: '#063d27', color: 'white', padding: 25, borderRadius: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
 const title = { margin: 0, color: '#c9a23f' }
 const subtitle = { margin: 0 }
