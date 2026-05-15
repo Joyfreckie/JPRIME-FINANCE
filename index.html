@@ -4,9 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>JPrime Finance</title>
+
+    <meta name="theme-color" content="#063d27" />
+    <meta name="description" content="JPrime Finance Secure Loan Management System" />
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
   </head>
+
   <body>
     <div id="root"></div>
+
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+        })
+      }
+    </script>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
