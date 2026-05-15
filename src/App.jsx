@@ -267,9 +267,7 @@ export default function App() {
 
     const affordabilityOk = disposable >= totalRepayable
     const loanRangeOk = loanAmount >= 1000 && loanAmount <= 4000
-
-    const approved =
-      employmentOk && verificationOk && affordabilityOk && loanRangeOk
+    const approved = employmentOk && verificationOk && affordabilityOk && loanRangeOk
 
     return {
       totalExpenses,
@@ -411,6 +409,12 @@ export default function App() {
   if (!session) {
     return (
       <div style={loginBackground}>
+        <div style={nodeLayer}></div>
+        <div style={nodeDotOne}></div>
+        <div style={nodeDotTwo}></div>
+        <div style={nodeDotThree}></div>
+        <div style={nodeDotFour}></div>
+
         <div style={loginCard}>
           <div style={logoCircle}>JP</div>
 
@@ -747,11 +751,74 @@ const loginBackground = {
   display: 'flex',
   justifyContent: 'center',
   alignItems: 'center',
-  background:
-    'linear-gradient(135deg, rgba(2,44,26,0.95), rgba(0,0,0,0.82)), radial-gradient(circle at top left, #c9a23f 0, transparent 35%), radial-gradient(circle at bottom right, #0b6b3a 0, transparent 35%)',
-  backgroundColor: '#063d27',
+  backgroundColor: '#031f14',
+  backgroundImage: `
+    radial-gradient(circle at 20% 20%, rgba(201,162,63,0.5) 0 2px, transparent 3px),
+    radial-gradient(circle at 80% 25%, rgba(255,255,255,0.35) 0 2px, transparent 3px),
+    radial-gradient(circle at 30% 75%, rgba(201,162,63,0.35) 0 2px, transparent 3px),
+    radial-gradient(circle at 75% 80%, rgba(255,255,255,0.25) 0 2px, transparent 3px),
+    linear-gradient(135deg, rgba(2,44,26,0.96), rgba(0,0,0,0.9))
+  `,
+  backgroundSize: '180px 180px, 220px 220px, 260px 260px, 300px 300px, cover',
   padding: 25,
-  fontFamily: 'Arial'
+  fontFamily: 'Arial',
+  position: 'relative',
+  overflow: 'hidden'
+}
+
+const nodeLayer = {
+  position: 'absolute',
+  inset: 0,
+  backgroundImage: `
+    linear-gradient(60deg, rgba(201,162,63,0.18) 1px, transparent 1px),
+    linear-gradient(120deg, rgba(255,255,255,0.08) 1px, transparent 1px)
+  `,
+  backgroundSize: '120px 120px',
+  opacity: 0.6
+}
+
+const nodeDotOne = {
+  position: 'absolute',
+  width: 260,
+  height: 260,
+  borderRadius: '50%',
+  background: 'rgba(201,162,63,0.15)',
+  filter: 'blur(20px)',
+  top: 80,
+  left: 120
+}
+
+const nodeDotTwo = {
+  position: 'absolute',
+  width: 220,
+  height: 220,
+  borderRadius: '50%',
+  background: 'rgba(11,107,58,0.35)',
+  filter: 'blur(24px)',
+  bottom: 80,
+  right: 120
+}
+
+const nodeDotThree = {
+  position: 'absolute',
+  width: 14,
+  height: 14,
+  borderRadius: '50%',
+  background: '#c9a23f',
+  top: '18%',
+  right: '24%',
+  boxShadow: '0 0 25px #c9a23f'
+}
+
+const nodeDotFour = {
+  position: 'absolute',
+  width: 12,
+  height: 12,
+  borderRadius: '50%',
+  background: '#ffffff',
+  bottom: '24%',
+  left: '26%',
+  boxShadow: '0 0 25px #ffffff'
 }
 
 const loginCard = {
@@ -763,7 +830,9 @@ const loginCard = {
   borderRadius: 28,
   padding: 45,
   boxShadow: '0 25px 80px rgba(0,0,0,0.45)',
-  color: 'white'
+  color: 'white',
+  position: 'relative',
+  zIndex: 2
 }
 
 const logoCircle = {
@@ -780,30 +849,10 @@ const logoCircle = {
   marginBottom: 20
 }
 
-const loginTitle = {
-  fontSize: 44,
-  margin: 0,
-  color: '#c9a23f',
-  fontWeight: 800
-}
-
-const loginSubtitle = {
-  marginTop: 8,
-  color: '#e8e8e8',
-  fontSize: 15
-}
-
-const loginHeading = {
-  fontSize: 30,
-  marginTop: 35,
-  marginBottom: 22
-}
-
-const loginFields = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 15
-}
+const loginTitle = { fontSize: 44, margin: 0, color: '#c9a23f', fontWeight: 800 }
+const loginSubtitle = { marginTop: 8, color: '#e8e8e8', fontSize: 15 }
+const loginHeading = { fontSize: 30, marginTop: 35, marginBottom: 22 }
+const loginFields = { display: 'flex', flexDirection: 'column', gap: 15 }
 
 const loginInput = {
   padding: 16,
@@ -837,19 +886,8 @@ const signupButton = {
   fontSize: 16
 }
 
-const authNotice = {
-  marginTop: 18,
-  background: 'rgba(255,255,255,0.15)',
-  padding: 12,
-  borderRadius: 10
-}
-
-const loginFooter = {
-  marginTop: 25,
-  color: '#ddd',
-  fontSize: 13,
-  lineHeight: 1.6
-}
+const authNotice = { marginTop: 18, background: 'rgba(255,255,255,0.15)', padding: 12, borderRadius: 10 }
+const loginFooter = { marginTop: 25, color: '#ddd', fontSize: 13, lineHeight: 1.6 }
 
 const page = { fontFamily: 'Arial', background: '#f4f6f4', minHeight: '100vh', padding: 25 }
 const header = { background: '#063d27', color: 'white', padding: 25, borderRadius: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
