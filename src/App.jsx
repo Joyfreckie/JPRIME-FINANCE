@@ -149,6 +149,7 @@ function fromDb(row) {
 export default function App() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
+  const [staffProfiles, setStaffProfiles] = useState([])
   const [authMode, setAuthMode] = useState('login')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
@@ -184,8 +185,14 @@ export default function App() {
     }
   }, [session])
 
+  useEffect(() => {
+    if (profile?.role === 'admin') {
+      loadStaffProfiles()
+    }
+  }, [profile])
+
   async function ensureProfile() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', session.user.id)
@@ -193,20 +200,31 @@ export default function App() {
 
     if (data) {
       setProfile(data)
+
+      if (data.status === 'disabled') {
+        alert('Your staff account has been disabled. Please contact the administrator.')
+        await logout()
+      }
+
       return
     }
 
-    const { data: created } = await supabase
+    const { data: created, error: createError } = await supabase
       .from('profiles')
       .insert({
         id: session.user.id,
         email: session.user.email,
-        role: 'staff'
+        role: 'staff',
+        status: 'active'
       })
       .select()
       .single()
 
-    setProfile(created)
+    if (createError) {
+      alert(createError.message)
+    } else {
+      setProfile(created)
+    }
   }
 
   async function handleAuth() {
@@ -240,6 +258,7 @@ export default function App() {
     setSession(null)
     setProfile(null)
     setClients([])
+    setStaffProfiles([])
   }
 
   async function loadClients() {
@@ -254,6 +273,47 @@ export default function App() {
     else setClients(data.map(fromDb))
 
     setLoading(false)
+  }
+
+  async function loadStaffProfiles() {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      alert(error.message)
+    } else {
+      setStaffProfiles(data || [])
+    }
+  }
+
+  async function updateStaffProfile(staffId, updates) {
+    if (!isAdmin) return alert('Only admin can manage staff accounts.')
+
+    const oldData = staffProfiles.find(staff => staff.id === staffId)
+
+    const { error } = await supabase
+      .from('profiles')
+      .update(updates)
+      .eq('id', staffId)
+
+    if (error) {
+      alert(error.message)
+    } else {
+      await supabase.from('audit_logs').insert({
+        user_id: session.user.id,
+        user_email: session.user.email,
+        action: 'updated staff profile',
+        table_name: 'profiles',
+        record_id: staffId,
+        old_data: oldData,
+        new_data: { ...oldData, ...updates }
+      })
+
+      await loadStaffProfiles()
+      alert('Staff account updated successfully.')
+    }
   }
 
   async function logAction(action, recordId, oldData = null, newData = null) {
@@ -464,7 +524,7 @@ export default function App() {
           <h1 style={title}>JPrime Finance</h1>
           <p style={subtitle}>Secure Loan Management System</p>
           <p style={subtitle}>Logged in: {session.user.email}</p>
-          <p style={roleBadge}>Role: {profile?.role || 'staff'}</p>
+          <p style={roleBadge}>Role: {profile?.role || 'staff'} | Status: {profile?.status || 'active'}</p>
         </div>
         <button style={goldButton} onClick={logout}>Logout</button>
       </header>
@@ -477,7 +537,8 @@ export default function App() {
           ['banking', 'Banking & DebiCheck'],
           ['logs', 'Client Logs'],
           ['agreement', 'Loan Agreement'],
-          ['payments', 'Payment Tracker']
+          ['payments', 'Payment Tracker'],
+          ...(isAdmin ? [['staff', 'Staff Management']] : [])
         ].map(([key, label]) => (
           <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>
             {label}
@@ -684,6 +745,71 @@ export default function App() {
           </table>
         </section>
       )}
+
+      {activeTab === 'staff' && isAdmin && (
+        <section style={card}>
+          <h2>Staff Management</h2>
+          <p style={smallText}>Admin only: manage staff roles and account access.</p>
+
+          <button style={primaryButton} onClick={loadStaffProfiles}>Refresh Staff List</button>
+
+          <table style={table}>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Change Role</th>
+                <th>Access</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {staffProfiles.map(staff => (
+                <tr key={staff.id}>
+                  <td>{staff.email}</td>
+                  <td>
+                    <span style={staff.role === 'admin' ? approvedBadge : statusBadge}>
+                      {staff.role}
+                    </span>
+                  </td>
+                  <td>
+                    <span style={staff.status === 'active' ? approvedBadge : declinedBadge}>
+                      {staff.status || 'active'}
+                    </span>
+                  </td>
+                  <td>{staff.created_at ? new Date(staff.created_at).toLocaleString() : ''}</td>
+                  <td>
+                    <button
+                      style={selectButton}
+                      onClick={() =>
+                        updateStaffProfile(staff.id, {
+                          role: staff.role === 'admin' ? 'staff' : 'admin'
+                        })
+                      }
+                    >
+                      Make {staff.role === 'admin' ? 'Staff' : 'Admin'}
+                    </button>
+                  </td>
+                  <td>
+                    <button
+                      style={staff.status === 'disabled' ? editButton : deleteButton}
+                      onClick={() =>
+                        updateStaffProfile(staff.id, {
+                          status: staff.status === 'disabled' ? 'active' : 'disabled'
+                        })
+                      }
+                    >
+                      {staff.status === 'disabled' ? 'Activate' : 'Disable'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </div>
   )
 }
@@ -853,6 +979,7 @@ const consentBox = { background: '#fff2cc', padding: 18, borderRadius: 15, margi
 const table = { width: '100%', borderCollapse: 'collapse' }
 const approvedBadge = { background: '#0b6b3a', color: 'white', padding: '5px 10px', borderRadius: 8 }
 const declinedBadge = { background: '#b00020', color: 'white', padding: '5px 10px', borderRadius: 8 }
+const statusBadge = { background: '#555', color: 'white', padding: '5px 10px', borderRadius: 8 }
 const editButton = { background: '#063d27', color: 'white', border: 'none', padding: '8px 12px', borderRadius: 8, marginRight: 6, cursor: 'pointer' }
 const selectButton = { background: '#c9a23f', color: '#000', border: 'none', padding: '8px 12px', borderRadius: 8, marginRight: 6, cursor: 'pointer' }
 const deleteButton = { background: '#b00020', color: 'white', border: 'none', padding: '8px 12px', borderRadius: 8, cursor: 'pointer' }
