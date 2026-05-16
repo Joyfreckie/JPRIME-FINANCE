@@ -345,7 +345,80 @@ function generateReceiptPDF(client, payment, result) {
   doc.save(fileName)
 }
 
+function assessAffordability(client) {
+  const netSalary = Number(client.netSalary || 0)
+  const grossSalary = Number(client.grossSalary || 0)
+  const loanAmount = Number(client.loanAmount || 0)
+  const fee = loanAmount * RATE
+  const totalRepayable = loanAmount + fee
+
+  const totalExpenses =
+    Number(client.rent || 0) +
+    Number(client.groceries || 0) +
+    Number(client.transport || 0) +
+    Number(client.debitOrders || 0) +
+    Number(client.existingLoans || 0) +
+    Number(client.otherExpenses || 0)
+
+  const disposable = netSalary - totalExpenses
+  const debtCommitments =
+    Number(client.debitOrders || 0) +
+    Number(client.existingLoans || 0) +
+    totalRepayable
+
+  const debtToIncomeRatio = netSalary > 0 ? (debtCommitments / netSalary) * 100 : 0
+  let score = 100
+  const reasons = []
+
+  if (netSalary <= 0) {
+    score -= 40
+    reasons.push('Net salary missing or invalid')
+  }
+
+  if (disposable < totalRepayable) {
+    score -= 35
+    reasons.push('Disposable income is below total repayable amount')
+  }
+
+  if (debtToIncomeRatio > 60) {
+    score -= 25
+    reasons.push('Debt-to-income ratio is above 60%')
+  } else if (debtToIncomeRatio > 45) {
+    score -= 15
+    reasons.push('Debt-to-income ratio is above 45%')
+  }
+
+  if (client.employmentStatus !== 'Permanent') {
+    score -= 15
+    reasons.push('Employment is not permanent')
+  }
+
+  if (Number(client.monthsEmployed || 0) < 3) {
+    score -= 15
+    reasons.push('Client employed for less than 3 months')
+  }
+
+  if (!client.consentPopia || !client.consentCreditCheck) {
+    score -= 20
+    reasons.push('Required POPIA or credit-check consent missing')
+  }
+
+  score = Math.max(0, Math.min(100, score))
+
+  const riskLevel = score >= 75 ? 'Low' : score >= 50 ? 'Medium' : 'High'
+  const affordabilityResult = score >= 65 && disposable >= totalRepayable ? 'Pass' : 'Fail'
+
+  return {
+    affordabilityScore: score,
+    debtToIncomeRatio,
+    riskLevel,
+    affordabilityResult,
+    affordabilityReason: reasons.length ? reasons.join('; ') : 'Client passes affordability checks'
+  }
+}
+
 function toDb(client, userId) {
+  const affordability = assessAffordability(client)
   return {
     user_id: userId,
     client_no: client.clientNo,
@@ -388,6 +461,11 @@ function toDb(client, userId) {
     consent_popia: client.consentPopia,
     consent_credit_check: client.consentCreditCheck,
     notes: client.notes,
+    affordability_score: affordability.affordabilityScore,
+    debt_to_income_ratio: affordability.debtToIncomeRatio,
+    risk_level: affordability.riskLevel,
+    affordability_result: affordability.affordabilityResult,
+    affordability_reason: affordability.affordabilityReason,
     updated_at: new Date().toISOString()
   }
 }
@@ -434,7 +512,12 @@ function fromDb(row) {
     assignedCollector: row.assigned_collector || '',
     consentPopia: row.consent_popia || false,
     consentCreditCheck: row.consent_credit_check || false,
-    notes: row.notes || ''
+    notes: row.notes || '',
+    affordabilityScore: row.affordability_score || 0,
+    debtToIncomeRatio: row.debt_to_income_ratio || 0,
+    riskLevel: row.risk_level || 'Not Assessed',
+    affordabilityResult: row.affordability_result || 'Pending',
+    affordabilityReason: row.affordability_reason || ''
   }
 }
 
@@ -665,7 +748,17 @@ export default function App() {
       client.consentPopia &&
       client.consentCreditCheck
 
-    return { totalExpenses, disposable, fee, totalRepayable, balance, approved }
+    const affordability = assessAffordability(client)
+
+    return {
+      totalExpenses,
+      disposable,
+      fee,
+      totalRepayable,
+      balance,
+      approved,
+      ...affordability
+    }
   }
 
   async function saveClient() {
@@ -1045,6 +1138,7 @@ export default function App() {
             <Stat title="Outstanding" value={money(dashboard.outstanding)} />
             <Stat title="Collected" value={money(dashboard.totalCollected)} />
             <Stat title="Overdue" value={money(dashboard.overdue)} />
+            <Stat title="Avg Risk" value={clients.length ? Math.round(clients.reduce((sum, client) => sum + (calc(client).affordabilityScore || 0), 0) / clients.length) + '%' : '0%'} />
           </div>
 
           <button style={primaryButton} onClick={newClient}>New Client Application</button>
@@ -1502,6 +1596,11 @@ function DecisionBox({ calc }) {
       <p>Disposable Income: {money(calc.disposable)}</p>
       <p>Service Fee 35%: {money(calc.fee)}</p>
       <p>Total Repayable: {money(calc.totalRepayable)}</p>
+      <p>Affordability Score: {Math.round(calc.affordabilityScore || 0)}%</p>
+      <p>Debt-to-Income Ratio: {Math.round(calc.debtToIncomeRatio || 0)}%</p>
+      <p>Risk Level: {calc.riskLevel}</p>
+      <p>Affordability Result: {calc.affordabilityResult}</p>
+      <p>Reason: {calc.affordabilityReason}</p>
     </div>
   )
 }
