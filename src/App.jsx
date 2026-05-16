@@ -447,6 +447,7 @@ export default function App() {
   const [documentType, setDocumentType] = useState('SA ID')
   const [uploading, setUploading] = useState(false)
   const [payments, setPayments] = useState([])
+  const [analyticsSummary, setAnalyticsSummary] = useState(null)
   const [paymentClientId, setPaymentClientId] = useState('')
   const [paymentAmount, setPaymentAmount] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('Cash')
@@ -482,6 +483,7 @@ export default function App() {
     if (session?.user) {
       ensureProfile()
       loadClients()
+      loadAnalyticsSummary()
     }
   }, [session])
 
@@ -566,6 +568,19 @@ export default function App() {
     else setClients(data.map(fromDb))
 
     setLoading(false)
+  }
+
+  async function loadAnalyticsSummary() {
+    const { data, error } = await supabase
+      .from('analytics_summary')
+      .select('*')
+      .single()
+
+    if (error) {
+      console.warn(error.message)
+    } else {
+      setAnalyticsSummary(data)
+    }
   }
 
   async function loadStaffProfiles() {
@@ -1013,6 +1028,7 @@ export default function App() {
           ['agreement', 'Loan Agreement'],
           ['payments', 'Payment Tracker'],
           ['documents', 'Documents'],
+          ['analytics', 'Analytics'],
           ...(isAdmin ? [['staff', 'Staff Management']] : [])
         ].map(([key, label]) => (
           <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>{label}</button>
@@ -1299,6 +1315,37 @@ export default function App() {
               })}
             </tbody>
           </table>
+        </section>
+      )}
+
+      {activeTab === 'analytics' && (
+        <section style={card}>
+          <h2>Admin Analytics Dashboard</h2>
+          <p style={smallText}>Live business performance summary from Supabase analytics.</p>
+
+          <div style={grid4}>
+            <Stat title="Total Clients" value={analyticsSummary?.total_clients || dashboard.totalClients} />
+            <Stat title="Loan Book" value={money(analyticsSummary?.total_loan_book || dashboard.totalLoans)} />
+            <Stat title="Service Fees / Profit" value={money(analyticsSummary?.total_service_fees || 0)} />
+            <Stat title="Total Collected" value={money(analyticsSummary?.total_collected || dashboard.totalCollected)} />
+            <Stat title="Outstanding" value={money(analyticsSummary?.total_outstanding || dashboard.outstanding)} />
+            <Stat title="Overdue Clients" value={analyticsSummary?.overdue_clients || 0} />
+            <Stat title="Approved" value={analyticsSummary?.approved_clients || dashboard.approved} />
+            <Stat title="Declined" value={analyticsSummary?.declined_clients || dashboard.declined} />
+            <Stat title="Paid Clients" value={analyticsSummary?.paid_clients || 0} />
+          </div>
+
+          <div style={summaryBox}>
+            <h3>Performance Notes</h3>
+            <p><b>Loan Book:</b> Total capital issued before service fee.</p>
+            <p><b>Service Fees / Profit:</b> Estimated 35% service fees from captured loan amounts.</p>
+            <p><b>Outstanding:</b> Total repayable minus amount paid.</p>
+            <p><b>Overdue:</b> Clients past due date with balance still outstanding.</p>
+          </div>
+
+          <button style={primaryButton} onClick={() => { loadClients(); loadAnalyticsSummary(); }}>
+            Refresh Analytics
+          </button>
         </section>
       )}
 
