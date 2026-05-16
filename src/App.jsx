@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './supabaseClient'
 import { jsPDF } from 'jspdf'
 
@@ -529,6 +529,12 @@ export default function App() {
   const [documentClientId, setDocumentClientId] = useState('')
   const [documentType, setDocumentType] = useState('SA ID')
   const [uploading, setUploading] = useState(false)
+  const signatureCanvasRef = useRef(null)
+  const isDrawingSignature = useRef(false)
+  const [signatureClientId, setSignatureClientId] = useState('')
+  const [signatureType, setSignatureType] = useState('loan_agreement')
+  const [signerName, setSignerName] = useState('')
+  const [signatures, setSignatures] = useState([])
   const [payments, setPayments] = useState([])
   const [analyticsSummary, setAnalyticsSummary] = useState(null)
   const [paymentClientId, setPaymentClientId] = useState('')
@@ -1003,6 +1009,111 @@ export default function App() {
     setUploading(false)
   }
 
+  function getSignaturePoint(event) {
+    const canvas = signatureCanvasRef.current
+    const rect = canvas.getBoundingClientRect()
+    const source = event.touches ? event.touches[0] : event
+
+    return {
+      x: source.clientX - rect.left,
+      y: source.clientY - rect.top
+    }
+  }
+
+  function startSignature(event) {
+    event.preventDefault()
+    const canvas = signatureCanvasRef.current
+    const ctx = canvas.getContext('2d')
+    const point = getSignaturePoint(event)
+
+    isDrawingSignature.current = true
+    ctx.beginPath()
+    ctx.moveTo(point.x, point.y)
+  }
+
+  function drawSignature(event) {
+    if (!isDrawingSignature.current) return
+    event.preventDefault()
+
+    const canvas = signatureCanvasRef.current
+    const ctx = canvas.getContext('2d')
+    const point = getSignaturePoint(event)
+
+    ctx.lineWidth = 2
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = '#000000'
+    ctx.lineTo(point.x, point.y)
+    ctx.stroke()
+  }
+
+  function stopSignature() {
+    isDrawingSignature.current = false
+  }
+
+  function clearSignature() {
+    const canvas = signatureCanvasRef.current
+    const ctx = canvas.getContext('2d')
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+  }
+
+  async function loadClientSignatures(clientId) {
+    if (!clientId) return
+
+    const { data, error } = await supabase
+      .from('digital_signatures')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('signed_at', { ascending: false })
+
+    if (error) alert(error.message)
+    else setSignatures(data || [])
+  }
+
+  async function saveSignature() {
+    if (!signatureClientId) return alert('Select a client first.')
+    if (!signerName.trim()) return alert('Enter signer name.')
+
+    const canvas = signatureCanvasRef.current
+    const signatureData = canvas.toDataURL('image/png')
+
+    const { data, error } = await supabase
+      .from('digital_signatures')
+      .insert({
+        client_id: signatureClientId,
+        user_id: session.user.id,
+        signature_type: signatureType,
+        signer_name: signerName,
+        signature_data: signatureData
+      })
+      .select()
+      .single()
+
+    if (error) {
+      alert(error.message)
+    } else {
+      await logAction('captured digital signature', data.id, null, data, 'digital_signatures')
+      await loadClientSignatures(signatureClientId)
+      clearSignature()
+      alert('Signature saved successfully.')
+    }
+  }
+
+  async function deleteSignature(signature) {
+    if (!isAdmin) return alert('Only admin can delete signatures.')
+    if (!confirm('Delete this signature?')) return
+
+    const { error } = await supabase
+      .from('digital_signatures')
+      .delete()
+      .eq('id', signature.id)
+
+    if (error) alert(error.message)
+    else {
+      await logAction('deleted digital signature', signature.id, signature, null, 'digital_signatures')
+      await loadClientSignatures(signature.client_id)
+    }
+  }
+
   async function openDocument(filePath) {
     const { data, error } = await supabase.storage
       .from('client-documents')
@@ -1121,6 +1232,7 @@ export default function App() {
           ['agreement', 'Loan Agreement'],
           ['payments', 'Payment Tracker'],
           ['documents', 'Documents'],
+          ['signatures', 'Digital Signatures'],
           ['analytics', 'Analytics'],
           ...(isAdmin ? [['staff', 'Staff Management']] : [])
         ].map(([key, label]) => (
@@ -1515,6 +1627,92 @@ export default function App() {
         </section>
       )}
 
+      {activeTab === 'signatures' && (
+        <section style={card}>
+          <h2>Digital Signatures</h2>
+          <p style={smallText}>Capture client signatures for loan agreements, debit mandates and POPIA consent records.</p>
+
+          <div style={grid2}>
+            <label style={labelStyle}>
+              Select Client
+              <select
+                style={input}
+                value={signatureClientId}
+                onChange={e => {
+                  setSignatureClientId(e.target.value)
+                  loadClientSignatures(e.target.value)
+                }}
+              >
+                <option value="">Select client</option>
+                {clients.map(client => (
+                  <option key={client.id} value={client.id}>{client.clientNo} - {client.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={labelStyle}>
+              Signature Type
+              <select style={input} value={signatureType} onChange={e => setSignatureType(e.target.value)}>
+                <option value="loan_agreement">Loan Agreement</option>
+                <option value="debit_mandate">Debit Mandate</option>
+                <option value="popia_consent">POPIA Consent</option>
+                <option value="payment_receipt">Payment Receipt</option>
+              </select>
+            </label>
+
+            <Field label="Signer Name" value={signerName} onChange={setSignerName} />
+          </div>
+
+          <div style={signatureBox}>
+            <p><b>Draw signature below:</b></p>
+            <canvas
+              ref={signatureCanvasRef}
+              width="650"
+              height="220"
+              style={signatureCanvas}
+              onMouseDown={startSignature}
+              onMouseMove={drawSignature}
+              onMouseUp={stopSignature}
+              onMouseLeave={stopSignature}
+              onTouchStart={startSignature}
+              onTouchMove={drawSignature}
+              onTouchEnd={stopSignature}
+            />
+          </div>
+
+          <button style={primaryButton} onClick={saveSignature}>Save Digital Signature</button>
+          <button style={goldButton} onClick={clearSignature}>Clear Signature</button>
+
+          <h3>Saved Signatures</h3>
+          <table style={table}>
+            <thead>
+              <tr>
+                <th>Signer</th>
+                <th>Type</th>
+                <th>Signed At</th>
+                <th>Signature</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signatures.map(signature => (
+                <tr key={signature.id}>
+                  <td>{signature.signer_name}</td>
+                  <td>{signature.signature_type}</td>
+                  <td>{new Date(signature.signed_at).toLocaleString()}</td>
+                  <td>
+                    <img src={signature.signature_data} alt="Saved signature" style={signaturePreview} />
+                  </td>
+                  <td>
+                    {isAdmin && <button style={deleteButton} onClick={() => deleteSignature(signature)}>Delete</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       {activeTab === 'staff' && isAdmin && (
         <section style={card}>
           <h2>Staff Management</h2>
@@ -1740,3 +1938,6 @@ const selectButton = { background: '#c9a23f', color: '#000', border: 'none', pad
 const deleteButton = { background: '#b00020', color: 'white', border: 'none', padding: '8px 12px', borderRadius: 8, cursor: 'pointer' }
 const agreementBox = { border: '1px solid #ccc', borderRadius: 15, padding: 25 }
 const smallText = { fontSize: 12, color: '#555', marginTop: 10 }
+const signatureBox = { background: '#fff2cc', padding: 18, borderRadius: 15, marginTop: 20 }
+const signatureCanvas = { width: '100%', maxWidth: 650, height: 220, background: 'white', border: '2px solid #063d27', borderRadius: 10, touchAction: 'none' }
+const signaturePreview = { width: 180, height: 70, objectFit: 'contain', background: 'white', border: '1px solid #ccc', borderRadius: 8 }
