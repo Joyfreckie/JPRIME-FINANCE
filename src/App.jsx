@@ -43,6 +43,10 @@ const emptyClient = {
   nextCollectionDate: '',
   collectionNotes: '',
   assignedCollector: '',
+  daysOverdue: 0,
+  collectionPriority: 'Normal',
+  lastCollectionAction: '',
+  lastContactDate: '',
   consentPopia: false,
   consentCreditCheck: false,
   notes: ''
@@ -345,6 +349,39 @@ function generateReceiptPDF(client, payment, result) {
   doc.save(fileName)
 }
 
+function assessArrears(client) {
+  const resultLoanAmount = Number(client.loanAmount || 0)
+  const resultFee = resultLoanAmount * RATE
+  const totalRepayable = resultLoanAmount + resultFee
+  const balance = totalRepayable - Number(client.amountPaid || 0)
+
+  if (!client.dueDate || balance <= 0) {
+    return {
+      daysOverdue: 0,
+      collectionPriority: 'Normal',
+      paymentStatus: balance <= 0 ? 'Paid' : client.paymentStatus || 'Pending',
+      applicationStatus: balance <= 0 ? 'paid' : client.applicationStatus || 'pending'
+    }
+  }
+
+  const due = new Date(client.dueDate)
+  const now = new Date()
+  const diffMs = now.setHours(0, 0, 0, 0) - due.setHours(0, 0, 0, 0)
+  const daysOverdue = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)))
+
+  let collectionPriority = 'Normal'
+  if (daysOverdue >= 30) collectionPriority = 'Critical'
+  else if (daysOverdue >= 14) collectionPriority = 'High'
+  else if (daysOverdue >= 7) collectionPriority = 'Medium'
+
+  return {
+    daysOverdue,
+    collectionPriority,
+    paymentStatus: daysOverdue > 0 ? 'Overdue' : client.paymentStatus || 'Pending',
+    applicationStatus: daysOverdue > 0 ? 'overdue' : client.applicationStatus || 'pending'
+  }
+}
+
 function assessAffordability(client) {
   const netSalary = Number(client.netSalary || 0)
   const grossSalary = Number(client.grossSalary || 0)
@@ -419,6 +456,7 @@ function assessAffordability(client) {
 
 function toDb(client, userId) {
   const affordability = assessAffordability(client)
+  const arrears = assessArrears(client)
   return {
     user_id: userId,
     client_no: client.clientNo,
@@ -466,6 +504,10 @@ function toDb(client, userId) {
     risk_level: affordability.riskLevel,
     affordability_result: affordability.affordabilityResult,
     affordability_reason: affordability.affordabilityReason,
+    days_overdue: arrears.daysOverdue,
+    collection_priority: arrears.collectionPriority,
+    last_collection_action: client.lastCollectionAction,
+    last_contact_date: client.lastContactDate || null,
     updated_at: new Date().toISOString()
   }
 }
@@ -510,6 +552,10 @@ function fromDb(row) {
     nextCollectionDate: row.next_collection_date || '',
     collectionNotes: row.collection_notes || '',
     assignedCollector: row.assigned_collector || '',
+    daysOverdue: row.days_overdue || 0,
+    collectionPriority: row.collection_priority || 'Normal',
+    lastCollectionAction: row.last_collection_action || '',
+    lastContactDate: row.last_contact_date || '',
     consentPopia: row.consent_popia || false,
     consentCreditCheck: row.consent_credit_check || false,
     notes: row.notes || '',
@@ -759,6 +805,7 @@ export default function App() {
       client.consentCreditCheck
 
     const affordability = assessAffordability(client)
+    const arrears = assessArrears(client)
 
     return {
       totalExpenses,
@@ -767,7 +814,8 @@ export default function App() {
       totalRepayable,
       balance,
       approved,
-      ...affordability
+      ...affordability,
+      ...arrears
     }
   }
 
@@ -886,6 +934,8 @@ export default function App() {
       payment_status: newPaymentStatus,
       application_status: newApplicationStatus,
       arrears_amount: Math.max(0, afterResult.balance),
+      days_overdue: afterResult.daysOverdue,
+      collection_priority: afterResult.collectionPriority,
       updated_at: new Date().toISOString()
     }
 
@@ -903,7 +953,9 @@ export default function App() {
       ...updatedClient,
       paymentStatus: newPaymentStatus,
       applicationStatus: newApplicationStatus,
-      arrearsAmount: Math.max(0, afterResult.balance)
+      arrearsAmount: Math.max(0, afterResult.balance),
+      daysOverdue: afterResult.daysOverdue,
+      collectionPriority: afterResult.collectionPriority
     }
 
     await logAction('recorded payment', paymentData.id, { client, beforeResult }, { payment: paymentData, client: finalClient, afterResult }, 'payments')
@@ -926,6 +978,8 @@ export default function App() {
         payment_status: result.balance <= 0 ? 'Paid' : 'Partial',
         application_status: result.balance <= 0 ? 'paid' : client.applicationStatus,
         arrears_amount: Math.max(0, result.balance),
+        days_overdue: result.daysOverdue,
+        collection_priority: result.collectionPriority,
         updated_at: new Date().toISOString()
       })
       .eq('id', client.id)
@@ -1330,6 +1384,7 @@ export default function App() {
           ['documents', 'Documents'],
           ['signatures', 'Digital Signatures'],
           ['whatsapp', 'WhatsApp Collections'],
+          ['arrears', 'Arrears Engine'],
           ['analytics', 'Analytics'],
           ...(isAdmin ? [['staff', 'Staff Management']] : [])
         ].map(([key, label]) => (
@@ -1347,6 +1402,7 @@ export default function App() {
             <Stat title="Outstanding" value={money(dashboard.outstanding)} />
             <Stat title="Collected" value={money(dashboard.totalCollected)} />
             <Stat title="Overdue" value={money(dashboard.overdue)} />
+            <Stat title="High Priority" value={clients.filter(client => calc(client).collectionPriority === 'High' || calc(client).collectionPriority === 'Critical').length} />
             <Stat title="Avg Risk" value={clients.length ? Math.round(clients.reduce((sum, client) => sum + (calc(client).affordabilityScore || 0), 0) / clients.length) + '%' : '0%'} />
           </div>
 
@@ -1380,6 +1436,9 @@ export default function App() {
             <Field label="Next Collection Date" type="date" value={form.nextCollectionDate} onChange={v => update('nextCollectionDate', v)} />
             <Field label="Assigned Collector" value={form.assignedCollector} onChange={v => update('assignedCollector', v)} />
             <Field label="Collection Notes" value={form.collectionNotes} onChange={v => update('collectionNotes', v)} />
+            <SelectField label="Collection Priority" value={form.collectionPriority} onChange={v => update('collectionPriority', v)} options={['Normal', 'Medium', 'High', 'Critical']} />
+            <Field label="Last Contact Date" type="date" value={form.lastContactDate} onChange={v => update('lastContactDate', v)} />
+            <Field label="Last Collection Action" value={form.lastCollectionAction} onChange={v => update('lastCollectionAction', v)} />
           </div>
 
           <div style={consentBox}>
@@ -1452,6 +1511,8 @@ export default function App() {
                 <th>Phone</th>
                 <th>Status</th>
                 <th>Payment</th>
+                <th>Days Overdue</th>
+                <th>Priority</th>
                 <th>Loan</th>
                 <th>Total Repayable</th>
                 <th>Balance</th>
@@ -1472,6 +1533,8 @@ export default function App() {
                     <td>{client.phone}</td>
                     <td>{client.applicationStatus}</td>
                     <td>{client.paymentStatus}</td>
+                    <td>{result.daysOverdue}</td>
+                    <td><span style={result.collectionPriority === 'Critical' || result.collectionPriority === 'High' ? declinedBadge : result.collectionPriority === 'Medium' ? statusBadge : approvedBadge}>{result.collectionPriority}</span></td>
                     <td>{money(client.loanAmount)}</td>
                     <td>{money(result.totalRepayable)}</td>
                     <td>{money(result.balance)}</td>
@@ -1719,6 +1782,69 @@ export default function App() {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {activeTab === 'arrears' && (
+        <section style={card}>
+          <h2>Auto Arrears Engine</h2>
+          <p style={smallText}>Automatically flags overdue accounts, days overdue and collection priority.</p>
+
+          <div style={grid4}>
+            <Stat title="Overdue Accounts" value={clients.filter(client => calc(client).daysOverdue > 0).length} />
+            <Stat title="Critical" value={clients.filter(client => calc(client).collectionPriority === 'Critical').length} />
+            <Stat title="High Priority" value={clients.filter(client => calc(client).collectionPriority === 'High').length} />
+            <Stat title="Overdue Balance" value={money(clients.reduce((sum, client) => {
+              const result = calc(client)
+              return sum + (result.daysOverdue > 0 ? Math.max(0, result.balance) : 0)
+            }, 0))} />
+          </div>
+
+          <h3>Collections Queue</h3>
+          <table style={table}>
+            <thead>
+              <tr>
+                <th>Client No</th>
+                <th>Name</th>
+                <th>Phone</th>
+                <th>Due Date</th>
+                <th>Balance</th>
+                <th>Days Overdue</th>
+                <th>Priority</th>
+                <th>Collector</th>
+                <th>Last Contact</th>
+                <th>Last Action</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clients
+                .map(client => ({ client, result: calc(client) }))
+                .filter(item => item.result.balance > 0)
+                .sort((a, b) => b.result.daysOverdue - a.result.daysOverdue)
+                .map(({ client, result }) => (
+                  <tr key={client.id}>
+                    <td>{client.clientNo}</td>
+                    <td>{client.name}</td>
+                    <td>{client.phone}</td>
+                    <td>{client.dueDate}</td>
+                    <td>{money(result.balance)}</td>
+                    <td>{result.daysOverdue}</td>
+                    <td>
+                      <span style={result.collectionPriority === 'Critical' || result.collectionPriority === 'High' ? declinedBadge : result.collectionPriority === 'Medium' ? statusBadge : approvedBadge}>
+                        {result.collectionPriority}
+                      </span>
+                    </td>
+                    <td>{client.assignedCollector || '-'}</td>
+                    <td>{client.lastContactDate || '-'}</td>
+                    <td>{client.lastCollectionAction || '-'}</td>
+                    <td>
+                      <button style={editButton} onClick={() => editClient(client)}>Update Action</button>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </section>
