@@ -1372,25 +1372,34 @@ export default function App() {
         <button style={goldButton} onClick={logout}>Logout</button>
       </header>
 
-      <nav style={tabs}>
-        {[
-          ['dashboard', 'Dashboard'],
-          ['capture', 'Client Capture'],
-          ['expenses', 'Expenses'],
-          ['banking', 'Banking & DebiCheck'],
-          ['logs', 'Client Logs'],
-          ['agreement', 'Loan Agreement'],
-          ['payments', 'Payment Tracker'],
-          ['documents', 'Documents'],
-          ['signatures', 'Digital Signatures'],
-          ['whatsapp', 'WhatsApp Collections'],
-          ['arrears', 'Arrears Engine'],
-          ['analytics', 'Analytics'],
-          ...(isAdmin ? [['staff', 'Staff Management']] : [])
-        ].map(([key, label]) => (
-          <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>{label}</button>
-        ))}
-      </nav>
+      <nav style={menuWrap}>
+  <MenuGroup title="Main">
+    <TabButton name="dashboard" label="Dashboard" activeTab={activeTab} setActiveTab={setActiveTab} />
+    <TabButton name="capture" label="Client Capture" activeTab={activeTab} setActiveTab={setActiveTab} />
+    <TabButton name="logs" label="Client Logs" activeTab={activeTab} setActiveTab={setActiveTab} />
+  </MenuGroup>
+
+  <MenuGroup title="Finance">
+    <TabButton name="payments" label="Payments" activeTab={activeTab} setActiveTab={setActiveTab} />
+    <TabButton name="documents" label="Documents" activeTab={activeTab} setActiveTab={setActiveTab} />
+    <TabButton name="agreement" label="Loan Agreement" activeTab={activeTab} setActiveTab={setActiveTab} />
+    <TabButton name="banking" label="Banking & DebiCheck" activeTab={activeTab} setActiveTab={setActiveTab} />
+    <TabButton name="expenses" label="Expenses" activeTab={activeTab} setActiveTab={setActiveTab} />
+  </MenuGroup>
+
+  <MenuGroup title="Communication">
+    <TabButton name="whatsapp" label="WhatsApp" activeTab={activeTab} setActiveTab={setActiveTab} />
+    <TabButton name="signatures" label="Signatures" activeTab={activeTab} setActiveTab={setActiveTab} />
+  </MenuGroup>
+
+  {isAdmin && (
+    <MenuGroup title="Admin">
+      <TabButton name="analytics" label="Analytics" activeTab={activeTab} setActiveTab={setActiveTab} />
+      <TabButton name="arrears" label="Arrears Engine" activeTab={activeTab} setActiveTab={setActiveTab} />
+      <TabButton name="staff" label="Staff Management" activeTab={activeTab} setActiveTab={setActiveTab} />
+    </MenuGroup>
+  )}
+</nav>
 
       {activeTab === 'dashboard' && (
         <section style={card}>
@@ -2063,6 +2072,25 @@ export default function App() {
     </div>
   )
 }
+function MenuGroup({ title, children }) {
+  return (
+    <div style={menuGroup}>
+      <p style={menuTitle}>{title}</p>
+      <div style={menuButtons}>{children}</div>
+    </div>
+  )
+}
+
+function TabButton({ name, label, activeTab, setActiveTab }) {
+  return (
+    <button
+      onClick={() => setActiveTab(name)}
+      style={activeTab === name ? tabActive : tab}
+    >
+      {label}
+    </button>
+  )
+}
 
 function Field({ label, value, onChange, type = 'text' }) {
   return (
@@ -2249,3 +2277,31 @@ const signatureBox = { background: '#fff2cc', padding: 18, borderRadius: 15, mar
 const signatureCanvas = { width: '100%', maxWidth: 650, height: 220, background: 'white', border: '2px solid #063d27', borderRadius: 10, touchAction: 'none' }
 const signaturePreview = { width: 180, height: 70, objectFit: 'contain', background: 'white', border: '1px solid #ccc', borderRadius: 8 }
 const textarea = { marginTop: 6, marginBottom: 12, padding: 12, borderRadius: 8, border: '1px solid #ccc', fontFamily: 'Arial', fontSize: 14 }
+const menuWrap = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+  gap: 15,
+  marginTop: 20
+}
+
+const menuGroup = {
+  background: 'white',
+  border: '1px solid #ddd',
+  borderRadius: 14,
+  padding: 12,
+  boxShadow: '0 2px 6px rgba(0,0,0,0.05)'
+}
+
+const menuTitle = {
+  margin: '0 0 10px 0',
+  fontSize: 13,
+  fontWeight: 'bold',
+  color: '#063d27',
+  textTransform: 'uppercase'
+}
+
+const menuButtons = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8
+}
