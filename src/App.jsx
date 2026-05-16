@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabaseClient'
+import { jsPDF } from 'jspdf'
 
 const RATE = 0.35
 
@@ -61,6 +62,82 @@ function plus30(date) {
 
 function nextClientNo(clients) {
   return `JP-${String(clients.length + 1).padStart(4, '0')}`
+}
+
+function generateLoanAgreementPDF(client, result) {
+  const doc = new jsPDF()
+  const fileName = `${client.clientNo || 'client'}-loan-agreement.pdf`
+
+  doc.setFillColor(6, 61, 39)
+  doc.rect(0, 0, 210, 28, 'F')
+
+  doc.setTextColor(201, 162, 63)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(22)
+  doc.text('JPrime Finance', 15, 16)
+
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(10)
+  doc.text('Secure Loan Management System', 15, 23)
+
+  doc.setTextColor(0, 0, 0)
+  doc.setFontSize(16)
+  doc.text('SHORT-TERM LOAN AGREEMENT', 15, 42)
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+
+  let y = 55
+
+  const line = (label, value) => {
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${label}:`, 15, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text(String(value || ''), 65, y)
+    y += 8
+  }
+
+  line('Client No', client.clientNo)
+  line('Borrower', client.name)
+  line('ID Number', client.idNumber)
+  line('Cell Number', client.phone)
+  line('Physical Address', client.address)
+  line('Employer', client.employer)
+  line('Employment Status', client.employmentStatus)
+  line('Loan Amount', money(client.loanAmount))
+  line('Service Fee 35%', money(result.fee))
+  line('Total Repayable', money(result.totalRepayable))
+  line('Loan Date', client.loanDate)
+  line('Repayment Date', client.dueDate)
+  line('Bank', client.bankName)
+  line('Account Holder', client.accountHolder)
+  line('Account Number', client.accountNumber)
+  line('Account Type', client.accountType)
+  line('DebiCheck Status', client.debicheckStatus)
+  line('Application Status', client.applicationStatus)
+
+  y += 5
+  doc.setFont('helvetica', 'bold')
+  doc.text('POPIA AND CREDIT CHECK CONSENT', 15, y)
+  y += 8
+
+  doc.setFont('helvetica', 'normal')
+  const consentText =
+    'The Borrower confirms that all information provided is true and correct. The Borrower gives JPrime Finance consent to collect, store, process and use personal information for loan assessment, affordability verification, employment verification, banking verification, credit checks, collections and record keeping purposes.'
+  doc.text(doc.splitTextToSize(consentText, 180), 15, y)
+  y += 30
+
+  line('POPIA Consent', client.consentPopia ? 'Yes' : 'No')
+  line('Credit Check Consent', client.consentCreditCheck ? 'Yes' : 'No')
+
+  y += 12
+  doc.text('Borrower Signature: _______________________________', 15, y)
+  y += 15
+  doc.text('Representative Signature: __________________________', 15, y)
+  y += 15
+  doc.text('Date: _______________________', 15, y)
+
+  doc.save(fileName)
 }
 
 function toDb(client, userId) {
@@ -362,7 +439,6 @@ export default function App() {
     if (!form.consentCreditCheck) return alert('Credit check consent is required.')
 
     setLoading(true)
-
     const payload = toDb(form, session.user.id)
 
     if (form.id) {
@@ -650,6 +726,13 @@ export default function App() {
         </section>
       )}
 
+      {activeTab === 'agreement' && (
+        <section style={card}>
+          <h2>Auto Loan Agreement</h2>
+          {!selectedClient ? <p>No client selected.</p> : <Agreement client={selectedClient} result={calc(selectedClient)} />}
+        </section>
+      )}
+
       {activeTab === 'capture' && (
         <section style={card}>
           <h2>Personal & Employment Details</h2>
@@ -773,26 +856,13 @@ export default function App() {
                     <td>
                       <button style={editButton} onClick={() => editClient(client)}>Edit</button>
                       <button style={selectButton} onClick={() => selectClient(client.clientNo)}>Agreement</button>
-                      {isAdmin && (
-                        <button style={deleteButton} onClick={() => deleteClient(client)}>Delete</button>
-                      )}
+                      {isAdmin && <button style={deleteButton} onClick={() => deleteClient(client)}>Delete</button>}
                     </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
-
-          {!isAdmin && (
-            <p style={smallText}>Staff role: delete function hidden. Only admin can delete client records.</p>
-          )}
-        </section>
-      )}
-
-      {activeTab === 'agreement' && (
-        <section style={card}>
-          <h2>Auto Loan Agreement</h2>
-          {!selectedClient ? <p>No client selected.</p> : <Agreement client={selectedClient} calc={calc(selectedClient)} />}
         </section>
       )}
 
@@ -836,10 +906,6 @@ export default function App() {
       {activeTab === 'documents' && (
         <section style={card}>
           <h2>Client Documents</h2>
-          <p style={smallText}>
-            Secure storage for SA ID, payslip, bank statement, signed agreement and proof of payment.
-          </p>
-
           <div style={grid2}>
             <label style={labelStyle}>
               Select Client
@@ -900,26 +966,18 @@ export default function App() {
                   <td>{new Date(doc.created_at).toLocaleString()}</td>
                   <td>
                     <button style={selectButton} onClick={() => openDocument(doc.file_path)}>View</button>
-                    {isAdmin && (
-                      <button style={deleteButton} onClick={() => deleteDocument(doc)}>Delete</button>
-                    )}
+                    {isAdmin && <button style={deleteButton} onClick={() => deleteDocument(doc)}>Delete</button>}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-
-          {!isAdmin && (
-            <p style={smallText}>Staff can upload and view documents. Only admin can delete documents.</p>
-          )}
         </section>
       )}
 
       {activeTab === 'staff' && isAdmin && (
         <section style={card}>
           <h2>Staff Management</h2>
-          <p style={smallText}>Admin only: manage staff roles and account access.</p>
-
           <button style={primaryButton} onClick={loadStaffProfiles}>Refresh Staff List</button>
 
           <table style={table}>
@@ -938,16 +996,8 @@ export default function App() {
               {staffProfiles.map(staff => (
                 <tr key={staff.id}>
                   <td>{staff.email}</td>
-                  <td>
-                    <span style={staff.role === 'admin' ? approvedBadge : statusBadge}>
-                      {staff.role}
-                    </span>
-                  </td>
-                  <td>
-                    <span style={staff.status === 'active' ? approvedBadge : declinedBadge}>
-                      {staff.status || 'active'}
-                    </span>
-                  </td>
+                  <td><span style={staff.role === 'admin' ? approvedBadge : statusBadge}>{staff.role}</span></td>
+                  <td><span style={staff.status === 'active' ? approvedBadge : declinedBadge}>{staff.status || 'active'}</span></td>
                   <td>{staff.created_at ? new Date(staff.created_at).toLocaleString() : ''}</td>
                   <td>
                     <button
@@ -1024,7 +1074,7 @@ function DecisionBox({ calc }) {
   )
 }
 
-function Agreement({ client, calc }) {
+function Agreement({ client, result }) {
   return (
     <div style={agreementBox}>
       <h2>JPrime Finance</h2>
@@ -1036,8 +1086,8 @@ function Agreement({ client, calc }) {
       <p><b>Cell:</b> {client.phone}</p>
       <p><b>Employer:</b> {client.employer}</p>
       <p><b>Loan Amount:</b> {money(client.loanAmount)}</p>
-      <p><b>Service Fee 35%:</b> {money(calc.fee)}</p>
-      <p><b>Total Repayable:</b> {money(calc.totalRepayable)}</p>
+      <p><b>Service Fee 35%:</b> {money(result.fee)}</p>
+      <p><b>Total Repayable:</b> {money(result.totalRepayable)}</p>
       <p><b>Repayment Date:</b> {client.dueDate}</p>
       <p><b>Bank:</b> {client.bankName}</p>
       <p><b>DebiCheck Status:</b> {client.debicheckStatus}</p>
@@ -1053,6 +1103,7 @@ function Agreement({ client, calc }) {
       <p>Representative Signature: _____________________</p>
 
       <button onClick={() => window.print()} style={primaryButton}>Print Agreement</button>
+      <button onClick={() => generateLoanAgreementPDF(client, result)} style={goldButton}>Download PDF Agreement</button>
     </div>
   )
 }
