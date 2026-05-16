@@ -217,6 +217,84 @@ function generateDebitMandatePDF(client, result) {
   doc.save(fileName)
 }
 
+function generateClientStatementPDF(client, payments, result) {
+  const doc = new jsPDF()
+  const fileName = `${client.clientNo || 'client'}-statement.pdf`
+
+  addPdfHeader(doc, 'CLIENT LOAN STATEMENT')
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+
+  let y = 58
+
+  const line = (label, value) => {
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${label}:`, 15, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text(String(value || ''), 75, y)
+    y += 8
+  }
+
+  line('Client No', client.clientNo)
+  line('Client Name', client.name)
+  line('ID Number', client.idNumber)
+  line('Loan Amount', money(client.loanAmount))
+  line('Service Fee 35%', money(result.fee))
+  line('Total Repayable', money(result.totalRepayable))
+  line('Amount Paid', money(client.amountPaid))
+  line('Balance Outstanding', money(result.balance))
+  line('Payment Status', client.paymentStatus || 'Pending')
+  line('Application Status', client.applicationStatus || 'Pending')
+  line('Due Date', client.dueDate)
+  line('Collection Status', result.balance > 0 ? 'ACTIVE COLLECTION' : 'PAID')
+
+  y += 10
+  doc.setFont('helvetica', 'bold')
+  doc.text('PAYMENT HISTORY', 15, y)
+  y += 10
+
+  if (!payments.length) {
+    doc.setFont('helvetica', 'normal')
+    doc.text('No payments recorded.', 15, y)
+  } else {
+    payments.forEach((payment, index) => {
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${index + 1}. Receipt:`, 15, y)
+      doc.setFont('helvetica', 'normal')
+      doc.text(payment.receipt_number || '', 55, y)
+      y += 7
+
+      doc.text(`Date: ${new Date(payment.payment_date).toLocaleString()}`, 20, y)
+      y += 7
+
+      doc.text(`Method: ${payment.payment_method}`, 20, y)
+      y += 7
+
+      doc.text(`Amount: ${money(payment.amount)}`, 20, y)
+      y += 10
+
+      if (y > 250) {
+        doc.addPage()
+        y = 20
+      }
+    })
+  }
+
+  y += 10
+  doc.setFont('helvetica', 'bold')
+  doc.text('STATEMENT NOTICE', 15, y)
+  y += 8
+
+  doc.setFont('helvetica', 'normal')
+  const statementText =
+    'This statement is generated electronically by JPrime Finance and reflects payments captured on the system at the date of issue. Any unpaid balance remains due and payable according to the signed loan agreement.'
+
+  doc.text(doc.splitTextToSize(statementText, 180), 15, y)
+
+  doc.save(fileName)
+}
+
 function generateReceiptPDF(client, payment, result) {
   const doc = new jsPDF()
   const fileName = `${payment.receipt_number || 'receipt'}.pdf`
@@ -1149,6 +1227,17 @@ export default function App() {
           )}
 
           <button style={primaryButton} onClick={recordPayment}>Record Payment & Generate Receipt</button>
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 20 }}>
+            {paymentClient && (
+              <button
+                style={goldButton}
+                onClick={() => generateClientStatementPDF(paymentClient, payments, calc(paymentClient))}
+              >
+                Download Client Statement PDF
+              </button>
+            )}
+          </div>
 
           <h3>Payment History</h3>
           <table style={table}>
