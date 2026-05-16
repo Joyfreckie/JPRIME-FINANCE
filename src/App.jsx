@@ -1,3 +1,6 @@
+// FULL src/App.jsx replacement with Debit Mandate PDF support
+// NOTE: Keep your existing package.json dependency: "jspdf": "^2.5.1"
+
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabaseClient'
 import { jsPDF } from 'jspdf'
@@ -64,12 +67,9 @@ function nextClientNo(clients) {
   return `JP-${String(clients.length + 1).padStart(4, '0')}`
 }
 
-function generateLoanAgreementPDF(client, result) {
-  const doc = new jsPDF()
-  const fileName = `${client.clientNo || 'client'}-loan-agreement.pdf`
-
+function addPdfHeader(doc, title) {
   doc.setFillColor(6, 61, 39)
-  doc.rect(0, 0, 210, 28, 'F')
+  doc.rect(0, 0, 210, 30, 'F')
 
   doc.setTextColor(201, 162, 63)
   doc.setFont('helvetica', 'bold')
@@ -78,22 +78,29 @@ function generateLoanAgreementPDF(client, result) {
 
   doc.setTextColor(255, 255, 255)
   doc.setFontSize(10)
-  doc.text('Secure Loan Management System', 15, 23)
+  doc.text('Secure Loan Management System', 15, 24)
 
   doc.setTextColor(0, 0, 0)
   doc.setFontSize(16)
-  doc.text('SHORT-TERM LOAN AGREEMENT', 15, 42)
+  doc.text(title, 15, 45)
+}
+
+function generateLoanAgreementPDF(client, result) {
+  const doc = new jsPDF()
+  const fileName = `${client.clientNo || 'client'}-loan-agreement.pdf`
+
+  addPdfHeader(doc, 'SHORT-TERM LOAN AGREEMENT')
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
 
-  let y = 55
+  let y = 58
 
   const line = (label, value) => {
     doc.setFont('helvetica', 'bold')
     doc.text(`${label}:`, 15, y)
     doc.setFont('helvetica', 'normal')
-    doc.text(String(value || ''), 65, y)
+    doc.text(String(value || ''), 70, y)
     y += 8
   }
 
@@ -125,13 +132,77 @@ function generateLoanAgreementPDF(client, result) {
   const consentText =
     'The Borrower confirms that all information provided is true and correct. The Borrower gives JPrime Finance consent to collect, store, process and use personal information for loan assessment, affordability verification, employment verification, banking verification, credit checks, collections and record keeping purposes.'
   doc.text(doc.splitTextToSize(consentText, 180), 15, y)
-  y += 30
+  y += 32
 
   line('POPIA Consent', client.consentPopia ? 'Yes' : 'No')
   line('Credit Check Consent', client.consentCreditCheck ? 'Yes' : 'No')
 
   y += 12
   doc.text('Borrower Signature: _______________________________', 15, y)
+  y += 15
+  doc.text('Representative Signature: __________________________', 15, y)
+  y += 15
+  doc.text('Date: _______________________', 15, y)
+
+  doc.save(fileName)
+}
+
+function generateDebitMandatePDF(client, result) {
+  const doc = new jsPDF()
+  const fileName = `${client.clientNo || 'client'}-debit-mandate.pdf`
+
+  addPdfHeader(doc, 'DEBIT ORDER / PAYMENT MANDATE')
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+
+  let y = 58
+
+  const line = (label, value) => {
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${label}:`, 15, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text(String(value || ''), 72, y)
+    y += 8
+  }
+
+  line('Mandate Reference', client.mandateRef || client.clientNo)
+  line('Client No', client.clientNo)
+  line('Client Name', client.name)
+  line('ID Number', client.idNumber)
+  line('Cell Number', client.phone)
+  line('Bank Name', client.bankName)
+  line('Account Holder', client.accountHolder)
+  line('Account Number', client.accountNumber)
+  line('Account Type', client.accountType)
+  line('Branch Code', client.branchCode)
+  line('DebiCheck Status', client.debicheckStatus)
+  line('Loan Amount', money(client.loanAmount))
+  line('Total Repayable', money(result.totalRepayable))
+  line('Debit / Payment Date', client.dueDate)
+
+  y += 8
+  doc.setFont('helvetica', 'bold')
+  doc.text('MANDATE AUTHORISATION', 15, y)
+  y += 8
+
+  doc.setFont('helvetica', 'normal')
+  const mandateText =
+    'I, the account holder/borrower, authorise JPrime Finance to use the banking details provided above for repayment collection purposes relating to this short-term loan agreement. I confirm that the account details are correct and that I understand the repayment amount and repayment date reflected in this mandate. Where a DebiCheck or debit order process is used, I understand that my authentication/approval may be required by my bank.'
+  doc.text(doc.splitTextToSize(mandateText, 180), 15, y)
+  y += 42
+
+  doc.setFont('helvetica', 'bold')
+  doc.text('IMPORTANT NOTICE', 15, y)
+  y += 8
+
+  doc.setFont('helvetica', 'normal')
+  const noticeText =
+    'This mandate must be signed voluntarily by the client. JPrime Finance must retain this mandate with the loan agreement and POPIA consent record. Collections must comply with applicable South African law and banking rules.'
+  doc.text(doc.splitTextToSize(noticeText, 180), 15, y)
+  y += 28
+
+  doc.text('Client Signature: _________________________________', 15, y)
   y += 15
   doc.text('Representative Signature: __________________________', 15, y)
   y += 15
@@ -933,6 +1004,7 @@ export default function App() {
                 <option>Payslip</option>
                 <option>Bank Statement</option>
                 <option>Signed Agreement</option>
+                <option>Debit Mandate</option>
                 <option>Proof of Payment</option>
                 <option>Other</option>
               </select>
@@ -1090,7 +1162,10 @@ function Agreement({ client, result }) {
       <p><b>Total Repayable:</b> {money(result.totalRepayable)}</p>
       <p><b>Repayment Date:</b> {client.dueDate}</p>
       <p><b>Bank:</b> {client.bankName}</p>
+      <p><b>Account Holder:</b> {client.accountHolder}</p>
+      <p><b>Account Number:</b> {client.accountNumber}</p>
       <p><b>DebiCheck Status:</b> {client.debicheckStatus}</p>
+      <p><b>Mandate Ref:</b> {client.mandateRef}</p>
       <p><b>POPIA Consent:</b> {client.consentPopia ? 'Yes' : 'No'}</p>
       <p><b>Credit Check Consent:</b> {client.consentCreditCheck ? 'Yes' : 'No'}</p>
 
@@ -1104,6 +1179,7 @@ function Agreement({ client, result }) {
 
       <button onClick={() => window.print()} style={primaryButton}>Print Agreement</button>
       <button onClick={() => generateLoanAgreementPDF(client, result)} style={goldButton}>Download PDF Agreement</button>
+      <button onClick={() => generateDebitMandatePDF(client, result)} style={goldButton}>Download Debit Mandate PDF</button>
     </div>
   )
 }
