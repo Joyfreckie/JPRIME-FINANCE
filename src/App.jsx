@@ -1,6 +1,3 @@
-// FULL src/App.jsx replacement with Debit Mandate PDF support
-// NOTE: Keep your existing package.json dependency: "jspdf": "^2.5.1"
-
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabaseClient'
 import { jsPDF } from 'jspdf'
@@ -41,6 +38,11 @@ const emptyClient = {
   employerVerified: 'Pending',
   bureauStatus: 'Not Checked',
   applicationStatus: 'pending',
+  paymentStatus: 'Pending',
+  arrearsAmount: '',
+  nextCollectionDate: '',
+  collectionNotes: '',
+  assignedCollector: '',
   consentPopia: false,
   consentCreditCheck: false,
   notes: ''
@@ -65,6 +67,10 @@ function plus30(date) {
 
 function nextClientNo(clients) {
   return `JP-${String(clients.length + 1).padStart(4, '0')}`
+}
+
+function receiptNumber(clientNo) {
+  return `REC-${clientNo || 'JP'}-${Date.now()}`
 }
 
 function addPdfHeader(doc, title) {
@@ -211,6 +217,56 @@ function generateDebitMandatePDF(client, result) {
   doc.save(fileName)
 }
 
+function generateReceiptPDF(client, payment, result) {
+  const doc = new jsPDF()
+  const fileName = `${payment.receipt_number || 'receipt'}.pdf`
+
+  addPdfHeader(doc, 'OFFICIAL PAYMENT RECEIPT')
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+
+  let y = 58
+
+  const line = (label, value) => {
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${label}:`, 15, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text(String(value || ''), 75, y)
+    y += 8
+  }
+
+  line('Receipt Number', payment.receipt_number)
+  line('Payment Date', new Date(payment.payment_date || new Date()).toLocaleString())
+  line('Client No', client.clientNo)
+  line('Client Name', client.name)
+  line('ID Number', client.idNumber)
+  line('Cell Number', client.phone)
+  line('Payment Method', payment.payment_method)
+  line('Amount Paid Now', money(payment.amount))
+  line('Total Repayable', money(result.totalRepayable))
+  line('Total Paid To Date', money(client.amountPaid))
+  line('Balance Outstanding', money(result.balance))
+  line('Payment Status', result.balance <= 0 ? 'Paid' : 'Partial / Outstanding')
+
+  y += 8
+  doc.setFont('helvetica', 'bold')
+  doc.text('PAYMENT CONFIRMATION', 15, y)
+  y += 8
+
+  doc.setFont('helvetica', 'normal')
+  const receiptText =
+    'This receipt confirms that JPrime Finance has recorded the payment above against the client loan account. The outstanding balance is subject to final reconciliation and verification of cleared funds.'
+  doc.text(doc.splitTextToSize(receiptText, 180), 15, y)
+  y += 30
+
+  doc.text('Issued By: JPrime Finance', 15, y)
+  y += 15
+  doc.text('Representative Signature: __________________________', 15, y)
+
+  doc.save(fileName)
+}
+
 function toDb(client, userId) {
   return {
     user_id: userId,
@@ -246,6 +302,11 @@ function toDb(client, userId) {
     employer_verified: client.employerVerified,
     bureau_status: client.bureauStatus,
     application_status: client.applicationStatus,
+    payment_status: client.paymentStatus,
+    arrears_amount: Number(client.arrearsAmount || 0),
+    next_collection_date: client.nextCollectionDate || null,
+    collection_notes: client.collectionNotes,
+    assigned_collector: client.assignedCollector,
     consent_popia: client.consentPopia,
     consent_credit_check: client.consentCreditCheck,
     notes: client.notes,
@@ -288,6 +349,11 @@ function fromDb(row) {
     employerVerified: row.employer_verified || 'Pending',
     bureauStatus: row.bureau_status || 'Not Checked',
     applicationStatus: row.application_status || 'pending',
+    paymentStatus: row.payment_status || 'Pending',
+    arrearsAmount: row.arrears_amount || '',
+    nextCollectionDate: row.next_collection_date || '',
+    collectionNotes: row.collection_notes || '',
+    assignedCollector: row.assigned_collector || '',
     consentPopia: row.consent_popia || false,
     consentCreditCheck: row.consent_credit_check || false,
     notes: row.notes || ''
@@ -302,6 +368,10 @@ export default function App() {
   const [documentClientId, setDocumentClientId] = useState('')
   const [documentType, setDocumentType] = useState('SA ID')
   const [uploading, setUploading] = useState(false)
+  const [payments, setPayments] = useState([])
+  const [paymentClientId, setPaymentClientId] = useState('')
+  const [paymentAmount, setPaymentAmount] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState('Cash')
   const [authMode, setAuthMode] = useState('login')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
@@ -403,6 +473,7 @@ export default function App() {
     setClients([])
     setStaffProfiles([])
     setDocuments([])
+    setPayments([])
   }
 
   async function loadClients() {
@@ -457,12 +528,12 @@ export default function App() {
     }
   }
 
-  async function logAction(action, recordId, oldData = null, newData = null) {
+  async function logAction(action, recordId, oldData = null, newData = null, tableName = 'clients') {
     await supabase.from('audit_logs').insert({
       user_id: session.user.id,
       user_email: session.user.email,
       action,
-      table_name: 'clients',
+      table_name: tableName,
       record_id: recordId || null,
       old_data: oldData,
       new_data: newData
@@ -567,17 +638,105 @@ export default function App() {
     setActiveTab('agreement')
   }
 
+  async function loadPayments(clientId) {
+    if (!clientId) return
+
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('payment_date', { ascending: false })
+
+    if (error) alert(error.message)
+    else setPayments(data || [])
+  }
+
+  async function recordPayment() {
+    if (!paymentClientId) return alert('Select a client first.')
+    if (!paymentAmount || Number(paymentAmount) <= 0) return alert('Enter a valid payment amount.')
+
+    const client = clients.find(c => c.id === paymentClientId)
+    if (!client) return alert('Client not found.')
+
+    const beforeResult = calc(client)
+    const newAmountPaid = Number(client.amountPaid || 0) + Number(paymentAmount || 0)
+    const updatedClient = { ...client, amountPaid: newAmountPaid }
+    const afterResult = calc(updatedClient)
+    const newPaymentStatus = afterResult.balance <= 0 ? 'Paid' : 'Partial'
+    const newApplicationStatus = afterResult.balance <= 0 ? 'paid' : client.applicationStatus
+    const receiptNo = receiptNumber(client.clientNo)
+
+    const paymentPayload = {
+      client_id: paymentClientId,
+      amount: Number(paymentAmount),
+      payment_method: paymentMethod,
+      receipt_number: receiptNo,
+      captured_by: session.user.id
+    }
+
+    const { data: paymentData, error: paymentError } = await supabase
+      .from('payments')
+      .insert(paymentPayload)
+      .select()
+      .single()
+
+    if (paymentError) {
+      alert(paymentError.message)
+      return
+    }
+
+    const clientPayload = {
+      amount_paid: newAmountPaid,
+      payment_status: newPaymentStatus,
+      application_status: newApplicationStatus,
+      arrears_amount: Math.max(0, afterResult.balance),
+      updated_at: new Date().toISOString()
+    }
+
+    const { error: updateError } = await supabase
+      .from('clients')
+      .update(clientPayload)
+      .eq('id', paymentClientId)
+
+    if (updateError) {
+      alert(updateError.message)
+      return
+    }
+
+    const finalClient = {
+      ...updatedClient,
+      paymentStatus: newPaymentStatus,
+      applicationStatus: newApplicationStatus,
+      arrearsAmount: Math.max(0, afterResult.balance)
+    }
+
+    await logAction('recorded payment', paymentData.id, { client, beforeResult }, { payment: paymentData, client: finalClient, afterResult }, 'payments')
+    await loadClients()
+    await loadPayments(paymentClientId)
+    setPaymentAmount('')
+
+    generateReceiptPDF(finalClient, paymentData, afterResult)
+    alert('Payment recorded and receipt generated.')
+  }
+
   async function updatePayment(client, amountPaid) {
     const updated = { ...client, amountPaid }
+    const result = calc(updated)
 
     const { error } = await supabase
       .from('clients')
-      .update(toDb(updated, session.user.id))
+      .update({
+        amount_paid: Number(amountPaid || 0),
+        payment_status: result.balance <= 0 ? 'Paid' : 'Partial',
+        application_status: result.balance <= 0 ? 'paid' : client.applicationStatus,
+        arrears_amount: Math.max(0, result.balance),
+        updated_at: new Date().toISOString()
+      })
       .eq('id', client.id)
 
     if (error) alert(error.message)
     else {
-      await logAction('updated payment', client.id, client, updated)
+      await logAction('updated payment total', client.id, client, updated)
       await loadClients()
     }
   }
@@ -696,21 +855,27 @@ export default function App() {
     window.open('https://www.experian.co.za/consumer/my-free-credit-check-and-your-free-credit-report', '_blank')
   }
 
-  const selectedClient =
-    clients.find(client => client.clientNo === selectedClientNo) || clients[0]
+  const selectedClient = clients.find(client => client.clientNo === selectedClientNo) || clients[0]
+  const paymentClient = clients.find(client => client.id === paymentClientId)
+  const paymentClientCalc = paymentClient ? calc(paymentClient) : null
 
   const dashboard = useMemo(() => {
     return clients.reduce(
       (summary, client) => {
         const c = calc(client)
+        const dueDate = client.dueDate ? new Date(client.dueDate) : null
+        const now = new Date()
+
         summary.totalClients += 1
         summary.approved += client.applicationStatus === 'approved' ? 1 : 0
         summary.declined += client.applicationStatus === 'declined' ? 1 : 0
         summary.totalLoans += Number(client.loanAmount || 0)
         summary.outstanding += Math.max(0, c.balance)
+        summary.totalCollected += Number(client.amountPaid || 0)
+        if (dueDate && dueDate < now && c.balance > 0) summary.overdue += c.balance
         return summary
       },
-      { totalClients: 0, approved: 0, declined: 0, totalLoans: 0, outstanding: 0 }
+      { totalClients: 0, approved: 0, declined: 0, totalLoans: 0, outstanding: 0, totalCollected: 0, overdue: 0 }
     )
   }, [clients])
 
@@ -725,9 +890,7 @@ export default function App() {
           <h1 style={loginTitle}>JPrime Finance</h1>
           <p style={loginSubtitle}>Secure Loan Management Platform</p>
 
-          <h2 style={loginHeading}>
-            {authMode === 'login' ? 'Secure Login' : 'Create Staff Account'}
-          </h2>
+          <h2 style={loginHeading}>{authMode === 'login' ? 'Secure Login' : 'Create Staff Account'}</h2>
 
           <div style={loginFields}>
             <input style={loginInput} placeholder="Email address" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
@@ -744,9 +907,7 @@ export default function App() {
 
           {authMessage && <p style={authNotice}>{authMessage}</p>}
 
-          <p style={loginFooter}>
-            Protected access enabled. Client information is stored securely in Supabase cloud infrastructure.
-          </p>
+          <p style={loginFooter}>Protected access enabled. Client information is stored securely in Supabase cloud infrastructure.</p>
         </div>
       </div>
     )
@@ -776,9 +937,7 @@ export default function App() {
           ['documents', 'Documents'],
           ...(isAdmin ? [['staff', 'Staff Management']] : [])
         ].map(([key, label]) => (
-          <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>
-            {label}
-          </button>
+          <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>{label}</button>
         ))}
       </nav>
 
@@ -790,17 +949,12 @@ export default function App() {
             <Stat title="Approved" value={dashboard.approved} />
             <Stat title="Declined" value={dashboard.declined} />
             <Stat title="Outstanding" value={money(dashboard.outstanding)} />
+            <Stat title="Collected" value={money(dashboard.totalCollected)} />
+            <Stat title="Overdue" value={money(dashboard.overdue)} />
           </div>
 
           <button style={primaryButton} onClick={newClient}>New Client Application</button>
           <button style={goldButton} onClick={openExperian}>Open Free Experian Credit Report</button>
-        </section>
-      )}
-
-      {activeTab === 'agreement' && (
-        <section style={card}>
-          <h2>Auto Loan Agreement</h2>
-          {!selectedClient ? <p>No client selected.</p> : <Agreement client={selectedClient} result={calc(selectedClient)} />}
         </section>
       )}
 
@@ -819,31 +973,33 @@ export default function App() {
             <Field label="Employer" value={form.employer} onChange={v => update('employer', v)} />
             <SelectField label="Employment Status" value={form.employmentStatus} onChange={v => update('employmentStatus', v)} options={['Permanent', 'Contract', 'Temporary', 'Self Employed']} />
             <SelectField label="Application Status" value={form.applicationStatus} onChange={v => update('applicationStatus', v)} options={['pending', 'approved', 'declined', 'paid', 'overdue']} />
+            <SelectField label="Payment Status" value={form.paymentStatus} onChange={v => update('paymentStatus', v)} options={['Pending', 'Partial', 'Paid', 'Overdue']} />
             <Field label="Months Employed" value={form.monthsEmployed} onChange={v => update('monthsEmployed', v)} />
             <Field label="Gross Salary" value={form.grossSalary} onChange={v => update('grossSalary', v)} />
             <Field label="Net Salary" value={form.netSalary} onChange={v => update('netSalary', v)} />
             <Field label="Requested Loan Amount" value={form.loanAmount} onChange={v => update('loanAmount', v)} />
             <Field label="Loan Date" type="date" value={form.loanDate} onChange={v => update('loanDate', v)} />
             <Field label="Due Date" type="date" value={form.dueDate} onChange={v => update('dueDate', v)} />
+            <Field label="Next Collection Date" type="date" value={form.nextCollectionDate} onChange={v => update('nextCollectionDate', v)} />
+            <Field label="Assigned Collector" value={form.assignedCollector} onChange={v => update('assignedCollector', v)} />
+            <Field label="Collection Notes" value={form.collectionNotes} onChange={v => update('collectionNotes', v)} />
           </div>
 
           <div style={consentBox}>
             <label>
-              <input type="checkbox" checked={form.consentPopia} onChange={e => update('consentPopia', e.target.checked)} />
-              {' '}Client gives POPIA consent for storing and processing personal information.
+              <input type="checkbox" checked={form.consentPopia} onChange={e => update('consentPopia', e.target.checked)} />{' '}
+              Client gives POPIA consent for storing and processing personal information.
             </label>
 
             <label>
-              <input type="checkbox" checked={form.consentCreditCheck} onChange={e => update('consentCreditCheck', e.target.checked)} />
-              {' '}Client gives consent for affordability, employment, banking and credit checks.
+              <input type="checkbox" checked={form.consentCreditCheck} onChange={e => update('consentCreditCheck', e.target.checked)} />{' '}
+              Client gives consent for affordability, employment, banking and credit checks.
             </label>
           </div>
 
           <DecisionBox calc={c} />
 
-          <button style={primaryButton} onClick={saveClient}>
-            {form.id ? 'Update Client Online' : 'Save Client Online'}
-          </button>
+          <button style={primaryButton} onClick={saveClient}>{form.id ? 'Update Client Online' : 'Save Client Online'}</button>
         </section>
       )}
 
@@ -898,8 +1054,10 @@ export default function App() {
                 <th>Name</th>
                 <th>Phone</th>
                 <th>Status</th>
+                <th>Payment</th>
                 <th>Loan</th>
                 <th>Total Repayable</th>
+                <th>Balance</th>
                 <th>Decision</th>
                 <th>Consent</th>
                 <th>Action</th>
@@ -916,12 +1074,12 @@ export default function App() {
                     <td>{client.name}</td>
                     <td>{client.phone}</td>
                     <td>{client.applicationStatus}</td>
+                    <td>{client.paymentStatus}</td>
                     <td>{money(client.loanAmount)}</td>
                     <td>{money(result.totalRepayable)}</td>
+                    <td>{money(result.balance)}</td>
                     <td>
-                      <span style={result.approved ? approvedBadge : declinedBadge}>
-                        {result.approved ? 'APPROVED' : 'DECLINED'}
-                      </span>
+                      <span style={result.approved ? approvedBadge : declinedBadge}>{result.approved ? 'APPROVED' : 'DECLINED'}</span>
                     </td>
                     <td>{client.consentPopia && client.consentCreditCheck ? 'YES' : 'NO'}</td>
                     <td>
@@ -937,9 +1095,90 @@ export default function App() {
         </section>
       )}
 
+      {activeTab === 'agreement' && (
+        <section style={card}>
+          <h2>Auto Loan Agreement</h2>
+          {!selectedClient ? <p>No client selected.</p> : <Agreement client={selectedClient} result={calc(selectedClient)} />}
+        </section>
+      )}
+
       {activeTab === 'payments' && (
         <section style={card}>
-          <h2>Payment Tracker</h2>
+          <h2>Payment Tracker & Receipt Generator</h2>
+
+          <div style={grid2}>
+            <label style={labelStyle}>
+              Select Client
+              <select
+                style={input}
+                value={paymentClientId}
+                onChange={e => {
+                  setPaymentClientId(e.target.value)
+                  loadPayments(e.target.value)
+                }}
+              >
+                <option value="">Select client</option>
+                {clients.map(client => (
+                  <option key={client.id} value={client.id}>{client.clientNo} - {client.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <Field label="Payment Amount" value={paymentAmount} onChange={setPaymentAmount} />
+
+            <label style={labelStyle}>
+              Payment Method
+              <select style={input} value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+                <option>Cash</option>
+                <option>EFT</option>
+                <option>Debit Order</option>
+                <option>DebiCheck</option>
+                <option>Card</option>
+                <option>Other</option>
+              </select>
+            </label>
+          </div>
+
+          {paymentClient && paymentClientCalc && (
+            <div style={summaryBox}>
+              <p><b>Client:</b> {paymentClient.clientNo} - {paymentClient.name}</p>
+              <p><b>Total Repayable:</b> {money(paymentClientCalc.totalRepayable)}</p>
+              <p><b>Already Paid:</b> {money(paymentClient.amountPaid)}</p>
+              <p><b>Current Balance:</b> {money(paymentClientCalc.balance)}</p>
+            </div>
+          )}
+
+          <button style={primaryButton} onClick={recordPayment}>Record Payment & Generate Receipt</button>
+
+          <h3>Payment History</h3>
+          <table style={table}>
+            <thead>
+              <tr>
+                <th>Receipt No</th>
+                <th>Amount</th>
+                <th>Method</th>
+                <th>Date</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map(payment => (
+                <tr key={payment.id}>
+                  <td>{payment.receipt_number}</td>
+                  <td>{money(payment.amount)}</td>
+                  <td>{payment.payment_method}</td>
+                  <td>{new Date(payment.payment_date).toLocaleString()}</td>
+                  <td>
+                    {paymentClient && (
+                      <button style={selectButton} onClick={() => generateReceiptPDF(paymentClient, payment, calc(paymentClient))}>Download Receipt</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <h3>All Client Balances</h3>
           <table style={table}>
             <thead>
               <tr>
@@ -965,7 +1204,7 @@ export default function App() {
                       <input defaultValue={client.amountPaid} onBlur={e => updatePayment(client, e.target.value)} />
                     </td>
                     <td>{money(result.balance)}</td>
-                    <td>{result.balance <= 0 ? 'PAID' : 'OUTSTANDING'}</td>
+                    <td>{result.balance <= 0 ? 'PAID' : client.paymentStatus || 'OUTSTANDING'}</td>
                   </tr>
                 )
               })}
@@ -990,9 +1229,7 @@ export default function App() {
               >
                 <option value="">Select client</option>
                 {clients.map(client => (
-                  <option key={client.id} value={client.id}>
-                    {client.clientNo} - {client.name}
-                  </option>
+                  <option key={client.id} value={client.id}>{client.clientNo} - {client.name}</option>
                 ))}
               </select>
             </label>
@@ -1005,6 +1242,7 @@ export default function App() {
                 <option>Bank Statement</option>
                 <option>Signed Agreement</option>
                 <option>Debit Mandate</option>
+                <option>Payment Receipt</option>
                 <option>Proof of Payment</option>
                 <option>Other</option>
               </select>
@@ -1072,26 +1310,12 @@ export default function App() {
                   <td><span style={staff.status === 'active' ? approvedBadge : declinedBadge}>{staff.status || 'active'}</span></td>
                   <td>{staff.created_at ? new Date(staff.created_at).toLocaleString() : ''}</td>
                   <td>
-                    <button
-                      style={selectButton}
-                      onClick={() =>
-                        updateStaffProfile(staff.id, {
-                          role: staff.role === 'admin' ? 'staff' : 'admin'
-                        })
-                      }
-                    >
+                    <button style={selectButton} onClick={() => updateStaffProfile(staff.id, { role: staff.role === 'admin' ? 'staff' : 'admin' })}>
                       Make {staff.role === 'admin' ? 'Staff' : 'Admin'}
                     </button>
                   </td>
                   <td>
-                    <button
-                      style={staff.status === 'disabled' ? editButton : deleteButton}
-                      onClick={() =>
-                        updateStaffProfile(staff.id, {
-                          status: staff.status === 'disabled' ? 'active' : 'disabled'
-                        })
-                      }
-                    >
+                    <button style={staff.status === 'disabled' ? editButton : deleteButton} onClick={() => updateStaffProfile(staff.id, { status: staff.status === 'disabled' ? 'active' : 'disabled' })}>
                       {staff.status === 'disabled' ? 'Activate' : 'Disable'}
                     </button>
                   </td>
