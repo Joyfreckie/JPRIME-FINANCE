@@ -150,6 +150,10 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [staffProfiles, setStaffProfiles] = useState([])
+  const [documents, setDocuments] = useState([])
+  const [documentClientId, setDocumentClientId] = useState('')
+  const [documentType, setDocumentType] = useState('SA ID')
+  const [uploading, setUploading] = useState(false)
   const [authMode, setAuthMode] = useState('login')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
@@ -192,7 +196,7 @@ export default function App() {
   }, [profile])
 
   async function ensureProfile() {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', session.user.id)
@@ -209,7 +213,7 @@ export default function App() {
       return
     }
 
-    const { data: created, error: createError } = await supabase
+    const { data: created, error } = await supabase
       .from('profiles')
       .insert({
         id: session.user.id,
@@ -220,11 +224,8 @@ export default function App() {
       .select()
       .single()
 
-    if (createError) {
-      alert(createError.message)
-    } else {
-      setProfile(created)
-    }
+    if (error) alert(error.message)
+    else setProfile(created)
   }
 
   async function handleAuth() {
@@ -233,14 +234,8 @@ export default function App() {
 
     const result =
       authMode === 'login'
-        ? await supabase.auth.signInWithPassword({
-            email: authEmail,
-            password: authPassword
-          })
-        : await supabase.auth.signUp({
-            email: authEmail,
-            password: authPassword
-          })
+        ? await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword })
+        : await supabase.auth.signUp({ email: authEmail, password: authPassword })
 
     setAuthMessage(
       result.error
@@ -259,6 +254,7 @@ export default function App() {
     setProfile(null)
     setClients([])
     setStaffProfiles([])
+    setDocuments([])
   }
 
   async function loadClients() {
@@ -281,11 +277,8 @@ export default function App() {
       .select('*')
       .order('created_at', { ascending: false })
 
-    if (error) {
-      alert(error.message)
-    } else {
-      setStaffProfiles(data || [])
-    }
+    if (error) alert(error.message)
+    else setStaffProfiles(data || [])
   }
 
   async function updateStaffProfile(staffId, updates) {
@@ -369,6 +362,7 @@ export default function App() {
     if (!form.consentCreditCheck) return alert('Credit check consent is required.')
 
     setLoading(true)
+
     const payload = toDb(form, session.user.id)
 
     if (form.id) {
@@ -457,6 +451,100 @@ export default function App() {
     }
   }
 
+  async function loadClientDocuments(clientId) {
+    if (!clientId) return
+
+    const { data, error } = await supabase
+      .from('client_documents')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false })
+
+    if (error) alert(error.message)
+    else setDocuments(data || [])
+  }
+
+  async function uploadClientDocument(event) {
+    const file = event.target.files[0]
+    if (!file) return
+    if (!documentClientId) return alert('Please select a client first.')
+
+    setUploading(true)
+
+    const fileExt = file.name.split('.').pop()
+    const cleanDocType = documentType.replaceAll(' ', '-')
+    const fileName = `${Date.now()}-${cleanDocType}.${fileExt}`
+    const filePath = `${documentClientId}/${fileName}`
+
+    const { error: uploadError } = await supabase.storage
+      .from('client-documents')
+      .upload(filePath, file)
+
+    if (uploadError) {
+      alert(uploadError.message)
+      setUploading(false)
+      return
+    }
+
+    const { error: dbError } = await supabase
+      .from('client_documents')
+      .insert({
+        client_id: documentClientId,
+        user_id: session.user.id,
+        document_type: documentType,
+        file_name: file.name,
+        file_path: filePath
+      })
+
+    if (dbError) {
+      alert(dbError.message)
+    } else {
+      await logAction('uploaded client document', documentClientId, null, {
+        document_type: documentType,
+        file_name: file.name
+      })
+
+      await loadClientDocuments(documentClientId)
+      alert('Document uploaded successfully.')
+    }
+
+    setUploading(false)
+  }
+
+  async function openDocument(filePath) {
+    const { data, error } = await supabase.storage
+      .from('client-documents')
+      .createSignedUrl(filePath, 60)
+
+    if (error) alert(error.message)
+    else window.open(data.signedUrl, '_blank')
+  }
+
+  async function deleteDocument(doc) {
+    if (!isAdmin) return alert('Only admin can delete documents.')
+    if (!confirm('Delete this document?')) return
+
+    const { error: storageError } = await supabase.storage
+      .from('client-documents')
+      .remove([doc.file_path])
+
+    if (storageError) {
+      alert(storageError.message)
+      return
+    }
+
+    const { error: dbError } = await supabase
+      .from('client_documents')
+      .delete()
+      .eq('id', doc.id)
+
+    if (dbError) alert(dbError.message)
+    else {
+      await logAction('deleted client document', doc.client_id, doc, null)
+      await loadClientDocuments(doc.client_id)
+    }
+  }
+
   function openExperian() {
     window.open('https://www.experian.co.za/consumer/my-free-credit-check-and-your-free-credit-report', '_blank')
   }
@@ -538,6 +626,7 @@ export default function App() {
           ['logs', 'Client Logs'],
           ['agreement', 'Loan Agreement'],
           ['payments', 'Payment Tracker'],
+          ['documents', 'Documents'],
           ...(isAdmin ? [['staff', 'Staff Management']] : [])
         ].map(([key, label]) => (
           <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>
@@ -574,10 +663,8 @@ export default function App() {
             <Field label="Next of Kin" value={form.nokName} onChange={v => update('nokName', v)} />
             <Field label="NOK Contact" value={form.nokPhone} onChange={v => update('nokPhone', v)} />
             <Field label="Employer" value={form.employer} onChange={v => update('employer', v)} />
-
             <SelectField label="Employment Status" value={form.employmentStatus} onChange={v => update('employmentStatus', v)} options={['Permanent', 'Contract', 'Temporary', 'Self Employed']} />
             <SelectField label="Application Status" value={form.applicationStatus} onChange={v => update('applicationStatus', v)} options={['pending', 'approved', 'declined', 'paid', 'overdue']} />
-
             <Field label="Months Employed" value={form.monthsEmployed} onChange={v => update('monthsEmployed', v)} />
             <Field label="Gross Salary" value={form.grossSalary} onChange={v => update('grossSalary', v)} />
             <Field label="Net Salary" value={form.netSalary} onChange={v => update('netSalary', v)} />
@@ -743,6 +830,88 @@ export default function App() {
               })}
             </tbody>
           </table>
+        </section>
+      )}
+
+      {activeTab === 'documents' && (
+        <section style={card}>
+          <h2>Client Documents</h2>
+          <p style={smallText}>
+            Secure storage for SA ID, payslip, bank statement, signed agreement and proof of payment.
+          </p>
+
+          <div style={grid2}>
+            <label style={labelStyle}>
+              Select Client
+              <select
+                style={input}
+                value={documentClientId}
+                onChange={e => {
+                  setDocumentClientId(e.target.value)
+                  loadClientDocuments(e.target.value)
+                }}
+              >
+                <option value="">Select client</option>
+                {clients.map(client => (
+                  <option key={client.id} value={client.id}>
+                    {client.clientNo} - {client.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label style={labelStyle}>
+              Document Type
+              <select style={input} value={documentType} onChange={e => setDocumentType(e.target.value)}>
+                <option>SA ID</option>
+                <option>Payslip</option>
+                <option>Bank Statement</option>
+                <option>Signed Agreement</option>
+                <option>Proof of Payment</option>
+                <option>Other</option>
+              </select>
+            </label>
+
+            <label style={labelStyle}>
+              Upload Document
+              <input style={input} type="file" onChange={uploadClientDocument} disabled={uploading} />
+            </label>
+          </div>
+
+          {uploading && <p>Uploading document...</p>}
+
+          <h3>Uploaded Documents</h3>
+
+          <table style={table}>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>File Name</th>
+                <th>Uploaded</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {documents.map(doc => (
+                <tr key={doc.id}>
+                  <td>{doc.document_type}</td>
+                  <td>{doc.file_name}</td>
+                  <td>{new Date(doc.created_at).toLocaleString()}</td>
+                  <td>
+                    <button style={selectButton} onClick={() => openDocument(doc.file_path)}>View</button>
+                    {isAdmin && (
+                      <button style={deleteButton} onClick={() => deleteDocument(doc)}>Delete</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {!isAdmin && (
+            <p style={smallText}>Staff can upload and view documents. Only admin can delete documents.</p>
+          )}
         </section>
       )}
 
