@@ -36,6 +36,9 @@ const emptyClient = {
   mandateRef: '',
   employerVerified: 'Pending',
   bureauStatus: 'Not Checked',
+  applicationStatus: 'pending',
+  consentPopia: false,
+  consentCreditCheck: false,
   notes: ''
 }
 
@@ -94,7 +97,11 @@ function toDb(client, userId) {
     mandate_ref: client.mandateRef,
     employer_verified: client.employerVerified,
     bureau_status: client.bureauStatus,
-    notes: client.notes
+    application_status: client.applicationStatus,
+    consent_popia: client.consentPopia,
+    consent_credit_check: client.consentCreditCheck,
+    notes: client.notes,
+    updated_at: new Date().toISOString()
   }
 }
 
@@ -132,12 +139,16 @@ function fromDb(row) {
     mandateRef: row.mandate_ref || '',
     employerVerified: row.employer_verified || 'Pending',
     bureauStatus: row.bureau_status || 'Not Checked',
+    applicationStatus: row.application_status || 'pending',
+    consentPopia: row.consent_popia || false,
+    consentCreditCheck: row.consent_credit_check || false,
     notes: row.notes || ''
   }
 }
 
 export default function App() {
   const [session, setSession] = useState(null)
+  const [profile, setProfile] = useState(null)
   const [authMode, setAuthMode] = useState('login')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
@@ -154,10 +165,10 @@ export default function App() {
     dueDate: plus30(today())
   })
 
+  const isAdmin = profile?.role === 'admin'
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-    })
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession)
@@ -168,9 +179,35 @@ export default function App() {
 
   useEffect(() => {
     if (session?.user) {
+      ensureProfile()
       loadClients()
     }
   }, [session])
+
+  async function ensureProfile() {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single()
+
+    if (data) {
+      setProfile(data)
+      return
+    }
+
+    const { data: created } = await supabase
+      .from('profiles')
+      .insert({
+        id: session.user.id,
+        email: session.user.email,
+        role: 'staff'
+      })
+      .select()
+      .single()
+
+    setProfile(created)
+  }
 
   async function handleAuth() {
     setAuthMessage('')
@@ -187,15 +224,13 @@ export default function App() {
             password: authPassword
           })
 
-    if (result.error) {
-      setAuthMessage(result.error.message)
-    } else {
-      setAuthMessage(
-        authMode === 'login'
+    setAuthMessage(
+      result.error
+        ? result.error.message
+        : authMode === 'login'
           ? 'Login successful.'
           : 'Account created. Check email if confirmation is required.'
-      )
-    }
+    )
 
     setLoading(false)
   }
@@ -203,6 +238,7 @@ export default function App() {
   async function logout() {
     await supabase.auth.signOut()
     setSession(null)
+    setProfile(null)
     setClients([])
   }
 
@@ -214,31 +250,27 @@ export default function App() {
       .select('*')
       .order('created_at', { ascending: false })
 
-    if (error) {
-      alert(error.message)
-    } else {
-      setClients(data.map(fromDb))
-    }
+    if (error) alert(error.message)
+    else setClients(data.map(fromDb))
 
     setLoading(false)
   }
 
-  async function logAction(action, recordId) {
+  async function logAction(action, recordId, oldData = null, newData = null) {
     await supabase.from('audit_logs').insert({
       user_id: session.user.id,
+      user_email: session.user.email,
       action,
       table_name: 'clients',
-      record_id: recordId || null
+      record_id: recordId || null,
+      old_data: oldData,
+      new_data: newData
     })
   }
 
   function update(field, value) {
     const updated = { ...form, [field]: value }
-
-    if (field === 'loanDate') {
-      updated.dueDate = plus30(value)
-    }
-
+    if (field === 'loanDate') updated.dueDate = plus30(value)
     setForm(updated)
   }
 
@@ -257,45 +289,39 @@ export default function App() {
     const totalRepayable = loanAmount + fee
     const balance = totalRepayable - Number(client.amountPaid || 0)
 
-    const employmentOk =
+    const approved =
       client.employmentStatus === 'Permanent' &&
-      Number(client.monthsEmployed || 0) >= 3
-
-    const verificationOk =
+      Number(client.monthsEmployed || 0) >= 3 &&
       client.employerVerified === 'Verified' &&
-      client.debicheckStatus === 'Verified'
+      client.debicheckStatus === 'Verified' &&
+      disposable >= totalRepayable &&
+      loanAmount >= 1000 &&
+      loanAmount <= 4000 &&
+      client.consentPopia &&
+      client.consentCreditCheck
 
-    const affordabilityOk = disposable >= totalRepayable
-    const loanRangeOk = loanAmount >= 1000 && loanAmount <= 4000
-    const approved = employmentOk && verificationOk && affordabilityOk && loanRangeOk
-
-    return {
-      totalExpenses,
-      disposable,
-      fee,
-      totalRepayable,
-      balance,
-      approved
-    }
+    return { totalExpenses, disposable, fee, totalRepayable, balance, approved }
   }
 
   async function saveClient() {
     if (!session?.user) return alert('Please login first.')
+    if (!form.consentPopia) return alert('POPIA consent is required.')
+    if (!form.consentCreditCheck) return alert('Credit check consent is required.')
 
     setLoading(true)
-
     const payload = toDb(form, session.user.id)
 
     if (form.id) {
+      const oldData = clients.find(c => c.id === form.id)
+
       const { error } = await supabase
         .from('clients')
         .update(payload)
         .eq('id', form.id)
 
-      if (error) {
-        alert(error.message)
-      } else {
-        await logAction('updated client', form.id)
+      if (error) alert(error.message)
+      else {
+        await logAction('updated client', form.id, oldData, form)
         await loadClients()
         setActiveTab('logs')
       }
@@ -306,10 +332,9 @@ export default function App() {
         .select()
         .single()
 
-      if (error) {
-        alert(error.message)
-      } else {
-        await logAction('created client', data.id)
+      if (error) alert(error.message)
+      else {
+        await logAction('created client', data.id, null, payload)
         await loadClients()
         setSelectedClientNo(data.client_no)
         setActiveTab('logs')
@@ -349,15 +374,15 @@ export default function App() {
       .update(toDb(updated, session.user.id))
       .eq('id', client.id)
 
-    if (error) {
-      alert(error.message)
-    } else {
-      await logAction('updated payment', client.id)
+    if (error) alert(error.message)
+    else {
+      await logAction('updated payment', client.id, client, updated)
       await loadClients()
     }
   }
 
   async function deleteClient(client) {
+    if (!isAdmin) return alert('Only admin users can delete clients.')
     if (!confirm('Delete this client?')) return
 
     const { error } = await supabase
@@ -365,19 +390,15 @@ export default function App() {
       .delete()
       .eq('id', client.id)
 
-    if (error) {
-      alert(error.message)
-    } else {
-      await logAction('deleted client', client.id)
+    if (error) alert(error.message)
+    else {
+      await logAction('deleted client', client.id, client, null)
       await loadClients()
     }
   }
 
   function openExperian() {
-    window.open(
-      'https://www.experian.co.za/consumer/my-free-credit-check-and-your-free-credit-report',
-      '_blank'
-    )
+    window.open('https://www.experian.co.za/consumer/my-free-credit-check-and-your-free-credit-report', '_blank')
   }
 
   const selectedClient =
@@ -388,19 +409,13 @@ export default function App() {
       (summary, client) => {
         const c = calc(client)
         summary.totalClients += 1
-        summary.approved += c.approved ? 1 : 0
-        summary.declined += c.approved ? 0 : 1
+        summary.approved += client.applicationStatus === 'approved' ? 1 : 0
+        summary.declined += client.applicationStatus === 'declined' ? 1 : 0
         summary.totalLoans += Number(client.loanAmount || 0)
         summary.outstanding += Math.max(0, c.balance)
         return summary
       },
-      {
-        totalClients: 0,
-        approved: 0,
-        declined: 0,
-        totalLoans: 0,
-        outstanding: 0
-      }
+      { totalClients: 0, approved: 0, declined: 0, totalLoans: 0, outstanding: 0 }
     )
   }, [clients])
 
@@ -410,14 +425,8 @@ export default function App() {
     return (
       <div style={loginBackground}>
         <div style={nodeLayer}></div>
-        <div style={nodeDotOne}></div>
-        <div style={nodeDotTwo}></div>
-        <div style={nodeDotThree}></div>
-        <div style={nodeDotFour}></div>
-
         <div style={loginCard}>
           <div style={logoCircle}>JP</div>
-
           <h1 style={loginTitle}>JPrime Finance</h1>
           <p style={loginSubtitle}>Secure Loan Management Platform</p>
 
@@ -426,29 +435,14 @@ export default function App() {
           </h2>
 
           <div style={loginFields}>
-            <input
-              style={loginInput}
-              placeholder="Email address"
-              value={authEmail}
-              onChange={e => setAuthEmail(e.target.value)}
-            />
-
-            <input
-              style={loginInput}
-              placeholder="Password"
-              type="password"
-              value={authPassword}
-              onChange={e => setAuthPassword(e.target.value)}
-            />
+            <input style={loginInput} placeholder="Email address" value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+            <input style={loginInput} placeholder="Password" type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
 
             <button style={loginButton} onClick={handleAuth} disabled={loading}>
               {loading ? 'Please wait...' : authMode === 'login' ? 'Login Securely' : 'Create Account'}
             </button>
 
-            <button
-              style={signupButton}
-              onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
-            >
+            <button style={signupButton} onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}>
               {authMode === 'login' ? 'Create New Staff Account' : 'Back to Login'}
             </button>
           </div>
@@ -470,6 +464,7 @@ export default function App() {
           <h1 style={title}>JPrime Finance</h1>
           <p style={subtitle}>Secure Loan Management System</p>
           <p style={subtitle}>Logged in: {session.user.email}</p>
+          <p style={roleBadge}>Role: {profile?.role || 'staff'}</p>
         </div>
         <button style={goldButton} onClick={logout}>Logout</button>
       </header>
@@ -484,11 +479,7 @@ export default function App() {
           ['agreement', 'Loan Agreement'],
           ['payments', 'Payment Tracker']
         ].map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setActiveTab(key)}
-            style={activeTab === key ? tabActive : tab}
-          >
+          <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>
             {label}
           </button>
         ))}
@@ -512,6 +503,7 @@ export default function App() {
       {activeTab === 'capture' && (
         <section style={card}>
           <h2>Personal & Employment Details</h2>
+
           <div style={grid2}>
             <Field label="Client No" value={form.clientNo} onChange={v => update('clientNo', v)} />
             <Field label="Full Name" value={form.name} onChange={v => update('name', v)} />
@@ -521,13 +513,28 @@ export default function App() {
             <Field label="Next of Kin" value={form.nokName} onChange={v => update('nokName', v)} />
             <Field label="NOK Contact" value={form.nokPhone} onChange={v => update('nokPhone', v)} />
             <Field label="Employer" value={form.employer} onChange={v => update('employer', v)} />
+
             <SelectField label="Employment Status" value={form.employmentStatus} onChange={v => update('employmentStatus', v)} options={['Permanent', 'Contract', 'Temporary', 'Self Employed']} />
+            <SelectField label="Application Status" value={form.applicationStatus} onChange={v => update('applicationStatus', v)} options={['pending', 'approved', 'declined', 'paid', 'overdue']} />
+
             <Field label="Months Employed" value={form.monthsEmployed} onChange={v => update('monthsEmployed', v)} />
             <Field label="Gross Salary" value={form.grossSalary} onChange={v => update('grossSalary', v)} />
             <Field label="Net Salary" value={form.netSalary} onChange={v => update('netSalary', v)} />
             <Field label="Requested Loan Amount" value={form.loanAmount} onChange={v => update('loanAmount', v)} />
             <Field label="Loan Date" type="date" value={form.loanDate} onChange={v => update('loanDate', v)} />
             <Field label="Due Date" type="date" value={form.dueDate} onChange={v => update('dueDate', v)} />
+          </div>
+
+          <div style={consentBox}>
+            <label>
+              <input type="checkbox" checked={form.consentPopia} onChange={e => update('consentPopia', e.target.checked)} />
+              {' '}Client gives POPIA consent for storing and processing personal information.
+            </label>
+
+            <label>
+              <input type="checkbox" checked={form.consentCreditCheck} onChange={e => update('consentCreditCheck', e.target.checked)} />
+              {' '}Client gives consent for affordability, employment, banking and credit checks.
+            </label>
           </div>
 
           <DecisionBox calc={c} />
@@ -549,6 +556,7 @@ export default function App() {
             <Field label="Existing Loans" value={form.existingLoans} onChange={v => update('existingLoans', v)} />
             <Field label="Other Expenses" value={form.otherExpenses} onChange={v => update('otherExpenses', v)} />
           </div>
+
           <div style={summaryBox}>
             <p><b>Total Expenses:</b> {money(c.totalExpenses)}</p>
             <p><b>Disposable Income:</b> {money(c.disposable)}</p>
@@ -571,13 +579,8 @@ export default function App() {
             <SelectField label="Credit Bureau Status" value={form.bureauStatus} onChange={v => update('bureauStatus', v)} options={['Not Checked', 'Client Report Received', 'Clear', 'Risky', 'Declined']} />
           </div>
 
-          <button style={goldButton} onClick={openExperian}>
-            Open Free Experian Credit Report
-          </button>
-
-          <p style={smallText}>
-            POPIA note: Client must consent before any credit, employment, or banking verification.
-          </p>
+          <button style={goldButton} onClick={openExperian}>Open Free Experian Credit Report</button>
+          <p style={smallText}>POPIA note: Client must consent before any credit, employment, or banking verification.</p>
         </section>
       )}
 
@@ -592,20 +595,25 @@ export default function App() {
                 <th>Client No</th>
                 <th>Name</th>
                 <th>Phone</th>
+                <th>Status</th>
                 <th>Loan</th>
                 <th>Total Repayable</th>
                 <th>Decision</th>
+                <th>Consent</th>
                 <th>Action</th>
               </tr>
             </thead>
+
             <tbody>
               {clients.map(client => {
                 const result = calc(client)
+
                 return (
                   <tr key={client.id}>
                     <td>{client.clientNo}</td>
                     <td>{client.name}</td>
                     <td>{client.phone}</td>
+                    <td>{client.applicationStatus}</td>
                     <td>{money(client.loanAmount)}</td>
                     <td>{money(result.totalRepayable)}</td>
                     <td>
@@ -613,16 +621,23 @@ export default function App() {
                         {result.approved ? 'APPROVED' : 'DECLINED'}
                       </span>
                     </td>
+                    <td>{client.consentPopia && client.consentCreditCheck ? 'YES' : 'NO'}</td>
                     <td>
                       <button style={editButton} onClick={() => editClient(client)}>Edit</button>
                       <button style={selectButton} onClick={() => selectClient(client.clientNo)}>Agreement</button>
-                      <button style={deleteButton} onClick={() => deleteClient(client)}>Delete</button>
+                      {isAdmin && (
+                        <button style={deleteButton} onClick={() => deleteClient(client)}>Delete</button>
+                      )}
                     </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
+
+          {!isAdmin && (
+            <p style={smallText}>Staff role: delete function hidden. Only admin can delete client records.</p>
+          )}
         </section>
       )}
 
@@ -647,19 +662,18 @@ export default function App() {
                 <th>Status</th>
               </tr>
             </thead>
+
             <tbody>
               {clients.map(client => {
                 const result = calc(client)
+
                 return (
                   <tr key={client.id}>
                     <td>{client.clientNo}</td>
                     <td>{client.name}</td>
                     <td>{money(result.totalRepayable)}</td>
                     <td>
-                      <input
-                        defaultValue={client.amountPaid}
-                        onBlur={e => updatePayment(client, e.target.value)}
-                      />
+                      <input defaultValue={client.amountPaid} onBlur={e => updatePayment(client, e.target.value)} />
                     </td>
                     <td>{money(result.balance)}</td>
                     <td>{result.balance <= 0 ? 'PAID' : 'OUTSTANDING'}</td>
@@ -732,10 +746,12 @@ function Agreement({ client, calc }) {
       <p><b>Repayment Date:</b> {client.dueDate}</p>
       <p><b>Bank:</b> {client.bankName}</p>
       <p><b>DebiCheck Status:</b> {client.debicheckStatus}</p>
+      <p><b>POPIA Consent:</b> {client.consentPopia ? 'Yes' : 'No'}</p>
+      <p><b>Credit Check Consent:</b> {client.consentCreditCheck ? 'Yes' : 'No'}</p>
 
       <p>
-        The Borrower agrees to repay the total amount on or before the repayment date.
-        The Borrower confirms that the information provided is true and correct.
+        The Borrower confirms that information provided is true and correct and gives consent
+        for JPrime Finance to process personal information for loan assessment purposes.
       </p>
 
       <p>Borrower Signature: __________________________</p>
@@ -756,10 +772,9 @@ const loginBackground = {
     radial-gradient(circle at 20% 20%, rgba(201,162,63,0.5) 0 2px, transparent 3px),
     radial-gradient(circle at 80% 25%, rgba(255,255,255,0.35) 0 2px, transparent 3px),
     radial-gradient(circle at 30% 75%, rgba(201,162,63,0.35) 0 2px, transparent 3px),
-    radial-gradient(circle at 75% 80%, rgba(255,255,255,0.25) 0 2px, transparent 3px),
     linear-gradient(135deg, rgba(2,44,26,0.96), rgba(0,0,0,0.9))
   `,
-  backgroundSize: '180px 180px, 220px 220px, 260px 260px, 300px 300px, cover',
+  backgroundSize: '180px 180px, 220px 220px, 260px 260px, cover',
   padding: 25,
   fontFamily: 'Arial',
   position: 'relative',
@@ -775,50 +790,6 @@ const nodeLayer = {
   `,
   backgroundSize: '120px 120px',
   opacity: 0.6
-}
-
-const nodeDotOne = {
-  position: 'absolute',
-  width: 260,
-  height: 260,
-  borderRadius: '50%',
-  background: 'rgba(201,162,63,0.15)',
-  filter: 'blur(20px)',
-  top: 80,
-  left: 120
-}
-
-const nodeDotTwo = {
-  position: 'absolute',
-  width: 220,
-  height: 220,
-  borderRadius: '50%',
-  background: 'rgba(11,107,58,0.35)',
-  filter: 'blur(24px)',
-  bottom: 80,
-  right: 120
-}
-
-const nodeDotThree = {
-  position: 'absolute',
-  width: 14,
-  height: 14,
-  borderRadius: '50%',
-  background: '#c9a23f',
-  top: '18%',
-  right: '24%',
-  boxShadow: '0 0 25px #c9a23f'
-}
-
-const nodeDotFour = {
-  position: 'absolute',
-  width: 12,
-  height: 12,
-  borderRadius: '50%',
-  background: '#ffffff',
-  bottom: '24%',
-  left: '26%',
-  boxShadow: '0 0 25px #ffffff'
 }
 
 const loginCard = {
@@ -853,39 +824,9 @@ const loginTitle = { fontSize: 44, margin: 0, color: '#c9a23f', fontWeight: 800 
 const loginSubtitle = { marginTop: 8, color: '#e8e8e8', fontSize: 15 }
 const loginHeading = { fontSize: 30, marginTop: 35, marginBottom: 22 }
 const loginFields = { display: 'flex', flexDirection: 'column', gap: 15 }
-
-const loginInput = {
-  padding: 16,
-  borderRadius: 14,
-  border: '1px solid rgba(255,255,255,0.25)',
-  background: 'rgba(255,255,255,0.12)',
-  color: 'white',
-  fontSize: 16,
-  outline: 'none'
-}
-
-const loginButton = {
-  background: '#063d27',
-  color: 'white',
-  padding: 16,
-  border: 'none',
-  borderRadius: 14,
-  cursor: 'pointer',
-  fontWeight: 'bold',
-  fontSize: 16
-}
-
-const signupButton = {
-  background: '#c9a23f',
-  color: '#000',
-  padding: 16,
-  border: 'none',
-  borderRadius: 14,
-  cursor: 'pointer',
-  fontWeight: 'bold',
-  fontSize: 16
-}
-
+const loginInput = { padding: 16, borderRadius: 14, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.12)', color: 'white', fontSize: 16, outline: 'none' }
+const loginButton = { background: '#063d27', color: 'white', padding: 16, border: 'none', borderRadius: 14, cursor: 'pointer', fontWeight: 'bold', fontSize: 16 }
+const signupButton = { background: '#c9a23f', color: '#000', padding: 16, border: 'none', borderRadius: 14, cursor: 'pointer', fontWeight: 'bold', fontSize: 16 }
 const authNotice = { marginTop: 18, background: 'rgba(255,255,255,0.15)', padding: 12, borderRadius: 10 }
 const loginFooter = { marginTop: 25, color: '#ddd', fontSize: 13, lineHeight: 1.6 }
 
@@ -893,10 +834,11 @@ const page = { fontFamily: 'Arial', background: '#f4f6f4', minHeight: '100vh', p
 const header = { background: '#063d27', color: 'white', padding: 25, borderRadius: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
 const title = { margin: 0, color: '#c9a23f' }
 const subtitle = { margin: 0 }
+const roleBadge = { display: 'inline-block', background: '#c9a23f', color: '#000', padding: '5px 10px', borderRadius: 8, fontWeight: 'bold', marginTop: 8 }
 const tabs = { display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 20 }
 const tab = { padding: '10px 15px', border: '1px solid #ccc', borderRadius: 8, background: 'white', cursor: 'pointer' }
 const tabActive = { ...tab, background: '#063d27', color: 'white' }
-const card = { background: 'white', padding: 25, borderRadius: 18, marginTop: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }
+const card = { background: 'white', padding: 25, borderRadius: 18, marginTop: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflowX: 'auto' }
 const grid2 = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 15 }
 const grid4 = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }
 const labelStyle = { display: 'flex', flexDirection: 'column', fontWeight: 'bold' }
@@ -907,6 +849,7 @@ const statBox = { background: '#063d27', color: 'white', padding: 20, borderRadi
 const approveBox = { background: '#d9ead3', padding: 18, borderRadius: 15, marginTop: 20 }
 const declineBox = { background: '#f4cccc', padding: 18, borderRadius: 15, marginTop: 20 }
 const summaryBox = { background: '#fff2cc', padding: 18, borderRadius: 15, marginTop: 20 }
+const consentBox = { background: '#fff2cc', padding: 18, borderRadius: 15, marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10, fontWeight: 'bold' }
 const table = { width: '100%', borderCollapse: 'collapse' }
 const approvedBadge = { background: '#0b6b3a', color: 'white', padding: '5px 10px', borderRadius: 8 }
 const declinedBadge = { background: '#b00020', color: 'white', padding: '5px 10px', borderRadius: 8 }
