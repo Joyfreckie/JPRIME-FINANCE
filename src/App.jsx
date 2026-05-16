@@ -535,6 +535,10 @@ export default function App() {
   const [signatureType, setSignatureType] = useState('loan_agreement')
   const [signerName, setSignerName] = useState('')
   const [signatures, setSignatures] = useState([])
+  const [whatsappClientId, setWhatsappClientId] = useState('')
+  const [whatsappType, setWhatsappType] = useState('payment_reminder')
+  const [whatsappMessage, setWhatsappMessage] = useState('')
+  const [whatsappLogs, setWhatsappLogs] = useState([])
   const [payments, setPayments] = useState([])
   const [analyticsSummary, setAnalyticsSummary] = useState(null)
   const [paymentClientId, setPaymentClientId] = useState('')
@@ -1056,6 +1060,98 @@ export default function App() {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
   }
 
+  function cleanPhoneForWhatsApp(phone) {
+    const digits = String(phone || '').replace(/[^0-9]/g, '')
+    if (!digits) return ''
+    if (digits.startsWith('27')) return digits
+    if (digits.startsWith('0')) return '27' + digits.slice(1)
+    return digits
+  }
+
+  function buildWhatsAppMessage(client, type) {
+    const result = calc(client)
+    const clientName = client.name || 'Client'
+    const balance = money(result.balance)
+    const dueDate = client.dueDate || ''
+    const totalRepayable = money(result.totalRepayable)
+    const paid = money(client.amountPaid)
+
+    if (type === 'payment_reminder') {
+      return 'Good day ' + clientName + ', this is a friendly reminder from JPrime Finance. Your repayment of ' + balance + ' is due on ' + dueDate + '. Please make payment as agreed. Thank you.'
+    }
+
+    if (type === 'overdue_reminder') {
+      return 'Good day ' + clientName + ', our records show that your JPrime Finance account is overdue. Outstanding balance: ' + balance + '. Please make payment urgently or contact us to make an arrangement.'
+    }
+
+    if (type === 'receipt_confirmation') {
+      return 'Good day ' + clientName + ', JPrime Finance confirms receipt of your payment. Total paid to date: ' + paid + '. Remaining balance: ' + balance + '. Thank you.'
+    }
+
+    if (type === 'statement_message') {
+      return 'Good day ' + clientName + ', your JPrime Finance loan statement is as follows: Total repayable ' + totalRepayable + ', paid to date ' + paid + ', balance outstanding ' + balance + ', due date ' + dueDate + '. Thank you.'
+    }
+
+    return 'Good day ' + clientName + ', this is a message from JPrime Finance regarding your loan account. Outstanding balance: ' + balance + '.'
+  }
+
+  async function loadWhatsAppLogs(clientId) {
+    if (!clientId) return
+
+    const { data, error } = await supabase
+      .from('whatsapp_logs')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false })
+
+    if (error) alert(error.message)
+    else setWhatsappLogs(data || [])
+  }
+
+  function prepareWhatsAppMessage(clientId = whatsappClientId, type = whatsappType) {
+    const client = clients.find(c => c.id === clientId)
+    if (!client) {
+      setWhatsappMessage('')
+      return
+    }
+
+    setWhatsappMessage(buildWhatsAppMessage(client, type))
+  }
+
+  async function sendWhatsAppMessage() {
+    const client = clients.find(c => c.id === whatsappClientId)
+    if (!client) return alert('Select a client first.')
+    if (!whatsappMessage.trim()) return alert('Generate or type a WhatsApp message first.')
+
+    const phone = cleanPhoneForWhatsApp(client.phone)
+    if (!phone) return alert('Client phone number is missing or invalid.')
+
+    const { error } = await supabase
+      .from('whatsapp_logs')
+      .insert({
+        client_id: whatsappClientId,
+        user_id: session.user.id,
+        message_type: whatsappType,
+        message_body: whatsappMessage,
+        phone
+      })
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    await logAction('created whatsapp collection message', whatsappClientId, null, {
+      message_type: whatsappType,
+      phone,
+      message_body: whatsappMessage
+    }, 'whatsapp_logs')
+
+    await loadWhatsAppLogs(whatsappClientId)
+    const encoded = encodeURIComponent(whatsappMessage)
+    window.open('https://wa.me/' + phone + '?text=' + encoded, '_blank')
+  }
+
   async function loadClientSignatures(clientId) {
     if (!clientId) return
 
@@ -1233,6 +1329,7 @@ export default function App() {
           ['payments', 'Payment Tracker'],
           ['documents', 'Documents'],
           ['signatures', 'Digital Signatures'],
+          ['whatsapp', 'WhatsApp Collections'],
           ['analytics', 'Analytics'],
           ...(isAdmin ? [['staff', 'Staff Management']] : [])
         ].map(([key, label]) => (
@@ -1627,6 +1724,90 @@ export default function App() {
         </section>
       )}
 
+      {activeTab === 'whatsapp' && (
+        <section style={card}>
+          <h2>WhatsApp Collections</h2>
+          <p style={smallText}>Generate payment reminders, overdue notices, receipt confirmations and statement messages. Messages are logged before opening WhatsApp.</p>
+
+          <div style={grid2}>
+            <label style={labelStyle}>
+              Select Client
+              <select
+                style={input}
+                value={whatsappClientId}
+                onChange={e => {
+                  setWhatsappClientId(e.target.value)
+                  loadWhatsAppLogs(e.target.value)
+                  prepareWhatsAppMessage(e.target.value, whatsappType)
+                }}
+              >
+                <option value="">Select client</option>
+                {clients.map(client => (
+                  <option key={client.id} value={client.id}>{client.clientNo} - {client.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={labelStyle}>
+              Message Type
+              <select
+                style={input}
+                value={whatsappType}
+                onChange={e => {
+                  setWhatsappType(e.target.value)
+                  prepareWhatsAppMessage(whatsappClientId, e.target.value)
+                }}
+              >
+                <option value="payment_reminder">Payment Reminder</option>
+                <option value="overdue_reminder">Overdue Reminder</option>
+                <option value="receipt_confirmation">Receipt Confirmation</option>
+                <option value="statement_message">Statement Message</option>
+              </select>
+            </label>
+          </div>
+
+          <button style={primaryButton} onClick={() => prepareWhatsAppMessage()}>
+            Generate Message
+          </button>
+
+          <label style={labelStyle}>
+            WhatsApp Message
+            <textarea
+              style={textarea}
+              value={whatsappMessage}
+              onChange={e => setWhatsappMessage(e.target.value)}
+              rows={7}
+            />
+          </label>
+
+          <button style={goldButton} onClick={sendWhatsAppMessage}>
+            Open WhatsApp & Log Message
+          </button>
+
+          <h3>WhatsApp Message History</h3>
+          <table style={table}>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Phone</th>
+                <th>Message</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {whatsappLogs.map(log => (
+                <tr key={log.id}>
+                  <td>{log.message_type}</td>
+                  <td>{log.phone}</td>
+                  <td>{log.message_body}</td>
+                  <td>{new Date(log.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       {activeTab === 'signatures' && (
         <section style={card}>
           <h2>Digital Signatures</h2>
@@ -1941,3 +2122,4 @@ const smallText = { fontSize: 12, color: '#555', marginTop: 10 }
 const signatureBox = { background: '#fff2cc', padding: 18, borderRadius: 15, marginTop: 20 }
 const signatureCanvas = { width: '100%', maxWidth: 650, height: 220, background: 'white', border: '2px solid #063d27', borderRadius: 10, touchAction: 'none' }
 const signaturePreview = { width: 180, height: 70, objectFit: 'contain', background: 'white', border: '1px solid #ccc', borderRadius: 8 }
+const textarea = { marginTop: 6, marginBottom: 12, padding: 12, borderRadius: 8, border: '1px solid #ccc', fontFamily: 'Arial', fontSize: 14 }
