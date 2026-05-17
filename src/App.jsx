@@ -1482,6 +1482,7 @@ export default function App() {
       <nav style={tabs}>
         {[
           ['dashboard', 'Dashboard'],
+      ['wizard', 'Loan Application'],
           ['capture', 'Client Capture'],
           ['expenses', 'Expenses'],
           ['banking', 'Banking & DebiCheck'],
@@ -1499,7 +1500,157 @@ export default function App() {
           <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>{label}</button>
         ))}
       </nav>
+{activeTab === 'wizard' && (
+  <section style={card}>
+    <h2>4-Step Loan Application Wizard</h2>
 
+    <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+      {[1, 2, 3, 4].map(step => (
+        <div
+          key={step}
+          style={{
+            padding: '10px 18px',
+            borderRadius: 10,
+            background: wizardStep === step ? '#063d27' : '#ddd',
+            color: wizardStep === step ? 'white' : '#000',
+            fontWeight: 'bold'
+          }}
+        >
+          Step {step}
+        </div>
+      ))}
+    </div>
+
+    {wizardStep === 1 && (
+      <>
+        <h3>Client Information</h3>
+
+        <div style={grid2}>
+          <Field label="Full Name" value={form.name} onChange={v => update('name', v)} />
+          <Field label="ID Number" value={form.idNumber} onChange={v => update('idNumber', v)} />
+          <Field label="Cell Number" value={form.phone} onChange={v => update('phone', v)} />
+          <Field label="Address" value={form.address} onChange={v => update('address', v)} />
+          <Field label="Next of Kin" value={form.nokName} onChange={v => update('nokName', v)} />
+          <Field label="NOK Contact" value={form.nokPhone} onChange={v => update('nokPhone', v)} />
+        </div>
+      </>
+    )}
+
+    {wizardStep === 2 && (
+      <>
+        <h3>Employment Details</h3>
+
+        <div style={grid2}>
+          <Field label="Employer" value={form.employer} onChange={v => update('employer', v)} />
+
+          <SelectField
+            label="Employment Status"
+            value={form.employmentStatus}
+            onChange={v => update('employmentStatus', v)}
+            options={['Permanent', 'Contract', 'Temporary', 'Self Employed']}
+          />
+
+          <Field label="Months Employed" value={form.monthsEmployed} onChange={v => update('monthsEmployed', v)} />
+          <Field label="Gross Salary" value={form.grossSalary} onChange={v => update('grossSalary', v)} />
+          <Field label="Net Salary" value={form.netSalary} onChange={v => update('netSalary', v)} />
+        </div>
+      </>
+    )}
+
+    {wizardStep === 3 && (
+      <>
+        <h3>Affordability Check</h3>
+
+        <div style={grid2}>
+          <Field label="Rent / Bond" value={form.rent} onChange={v => update('rent', v)} />
+          <Field label="Groceries" value={form.groceries} onChange={v => update('groceries', v)} />
+          <Field label="Transport" value={form.transport} onChange={v => update('transport', v)} />
+          <Field label="Debit Orders" value={form.debitOrders} onChange={v => update('debitOrders', v)} />
+          <Field label="Existing Loans" value={form.existingLoans} onChange={v => update('existingLoans', v)} />
+          <Field label="Other Expenses" value={form.otherExpenses} onChange={v => update('otherExpenses', v)} />
+          <Field label="Loan Amount" value={form.loanAmount} onChange={v => update('loanAmount', v)} />
+        </div>
+
+        <DecisionBox calc={c} />
+      </>
+    )}
+
+    {wizardStep === 4 && (
+      <>
+        <h3>Offer & Bureau / DebiCheck</h3>
+
+        <div style={grid2}>
+          <Field label="Bank Name" value={form.bankName} onChange={v => update('bankName', v)} />
+          <Field label="Account Holder" value={form.accountHolder} onChange={v => update('accountHolder', v)} />
+          <Field label="Account Number" value={form.accountNumber} onChange={v => update('accountNumber', v)} />
+
+          <SelectField
+            label="DebiCheck Status"
+            value={form.debicheckStatus}
+            onChange={v => update('debicheckStatus', v)}
+            options={['Pending', 'Verified', 'Failed']}
+          />
+
+          <SelectField
+            label="Credit Bureau Status"
+            value={form.bureauStatus}
+            onChange={v => update('bureauStatus', v)}
+            options={['Not Checked', 'Clear', 'Risky']}
+          />
+        </div>
+
+        <div style={consentBox}>
+          <label>
+            <input
+              type="checkbox"
+              checked={form.consentPopia}
+              onChange={e => update('consentPopia', e.target.checked)}
+            />
+            {' '}POPIA Consent
+          </label>
+
+          <label>
+            <input
+              type="checkbox"
+              checked={form.consentCreditCheck}
+              onChange={e => update('consentCreditCheck', e.target.checked)}
+            />
+            {' '}Credit Check Consent
+          </label>
+        </div>
+
+        <DecisionBox calc={c} />
+      </>
+    )}
+
+    <div style={{ marginTop: 25, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      {wizardStep > 1 && (
+        <button
+          style={selectButton}
+          onClick={() => setWizardStep(wizardStep - 1)}
+        >
+          Previous
+        </button>
+      )}
+
+      {wizardStep < 4 ? (
+        <button
+          style={primaryButton}
+          onClick={() => setWizardStep(wizardStep + 1)}
+        >
+          Next Step
+        </button>
+      ) : (
+        <button
+          style={goldButton}
+          onClick={saveClient}
+        >
+          Save Application
+        </button>
+      )}
+    </div>
+  </section>
+)}
       {activeTab === 'dashboard' && (
         <section style={card}>
           <h2>Dashboard</h2>
