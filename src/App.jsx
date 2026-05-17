@@ -585,6 +585,7 @@ export default function App() {
   const [whatsappType, setWhatsappType] = useState('payment_reminder')
   const [whatsappMessage, setWhatsappMessage] = useState('')
   const [whatsappLogs, setWhatsappLogs] = useState([])
+  const [exportLogs, setExportLogs] = useState([])
   const [payments, setPayments] = useState([])
   const [analyticsSummary, setAnalyticsSummary] = useState(null)
   const [paymentClientId, setPaymentClientId] = useState('')
@@ -629,6 +630,7 @@ export default function App() {
   useEffect(() => {
     if (profile?.role === 'admin') {
       loadStaffProfiles()
+      loadExportLogs()
     }
   }, [profile])
 
@@ -707,6 +709,112 @@ export default function App() {
     else setClients(data.map(fromDb))
 
     setLoading(false)
+  }
+
+  function csvEscape(value) {
+    const text = String(value ?? '')
+    return '"' + text.replace(/"/g, '""') + '"'
+  }
+
+  function downloadCSV(filename, rows) {
+    const csv = rows.map(row => row.map(csvEscape).join(',')).join('
+')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  async function logExport(exportType) {
+    if (!isAdmin) return
+
+    await supabase.from('export_logs').insert({
+      user_id: session.user.id,
+      export_type: exportType
+    })
+
+    await loadExportLogs()
+  }
+
+  async function loadExportLogs() {
+    const { data, error } = await supabase
+      .from('export_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    if (error) console.warn(error.message)
+    else setExportLogs(data || [])
+  }
+
+  async function exportClientsCSV() {
+    if (!isAdmin) return alert('Only admin can export client data.')
+
+    const headers = [
+      'Client No', 'Name', 'ID Number', 'Phone', 'Address', 'Employer',
+      'Employment Status', 'Gross Salary', 'Net Salary', 'Loan Amount',
+      'Amount Paid', 'Due Date', 'Application Status', 'Payment Status',
+      'Risk Level', 'Affordability Result', 'Days Overdue', 'Collection Priority'
+    ]
+
+    const rows = clients.map(client => {
+      const result = calc(client)
+      return [
+        client.clientNo,
+        client.name,
+        client.idNumber,
+        client.phone,
+        client.address,
+        client.employer,
+        client.employmentStatus,
+        client.grossSalary,
+        client.netSalary,
+        client.loanAmount,
+        client.amountPaid,
+        client.dueDate,
+        client.applicationStatus,
+        client.paymentStatus,
+        result.riskLevel,
+        result.affordabilityResult,
+        result.daysOverdue,
+        result.collectionPriority
+      ]
+    })
+
+    downloadCSV('jprime-clients-export.csv', [headers, ...rows])
+    await logExport('clients_csv')
+  }
+
+  async function exportPaymentsCSV() {
+    if (!isAdmin) return alert('Only admin can export payment data.')
+
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*')
+      .order('payment_date', { ascending: false })
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    const headers = ['Receipt Number', 'Client ID', 'Amount', 'Payment Method', 'Payment Date', 'Captured By']
+    const rows = (data || []).map(payment => [
+      payment.receipt_number,
+      payment.client_id,
+      payment.amount,
+      payment.payment_method,
+      payment.payment_date,
+      payment.captured_by
+    ])
+
+    downloadCSV('jprime-payments-export.csv', [headers, ...rows])
+    await logExport('payments_csv')
   }
 
   async function loadAnalyticsSummary() {
@@ -1372,34 +1480,26 @@ export default function App() {
         <button style={goldButton} onClick={logout}>Logout</button>
       </header>
 
-      <nav style={menuWrap}>
-  <MenuGroup title="Main">
-    <TabButton name="dashboard" label="Dashboard" activeTab={activeTab} setActiveTab={setActiveTab} />
-    <TabButton name="capture" label="Client Capture" activeTab={activeTab} setActiveTab={setActiveTab} />
-    <TabButton name="logs" label="Client Logs" activeTab={activeTab} setActiveTab={setActiveTab} />
-  </MenuGroup>
-
-  <MenuGroup title="Finance">
-    <TabButton name="payments" label="Payments" activeTab={activeTab} setActiveTab={setActiveTab} />
-    <TabButton name="documents" label="Documents" activeTab={activeTab} setActiveTab={setActiveTab} />
-    <TabButton name="agreement" label="Loan Agreement" activeTab={activeTab} setActiveTab={setActiveTab} />
-    <TabButton name="banking" label="Banking & DebiCheck" activeTab={activeTab} setActiveTab={setActiveTab} />
-    <TabButton name="expenses" label="Expenses" activeTab={activeTab} setActiveTab={setActiveTab} />
-  </MenuGroup>
-
-  <MenuGroup title="Communication">
-    <TabButton name="whatsapp" label="WhatsApp" activeTab={activeTab} setActiveTab={setActiveTab} />
-    <TabButton name="signatures" label="Signatures" activeTab={activeTab} setActiveTab={setActiveTab} />
-  </MenuGroup>
-
-  {isAdmin && (
-    <MenuGroup title="Admin">
-      <TabButton name="analytics" label="Analytics" activeTab={activeTab} setActiveTab={setActiveTab} />
-      <TabButton name="arrears" label="Arrears Engine" activeTab={activeTab} setActiveTab={setActiveTab} />
-      <TabButton name="staff" label="Staff Management" activeTab={activeTab} setActiveTab={setActiveTab} />
-    </MenuGroup>
-  )}
-</nav>
+      <nav style={tabs}>
+        {[
+          ['dashboard', 'Dashboard'],
+          ['capture', 'Client Capture'],
+          ['expenses', 'Expenses'],
+          ['banking', 'Banking & DebiCheck'],
+          ['logs', 'Client Logs'],
+          ['agreement', 'Loan Agreement'],
+          ['payments', 'Payment Tracker'],
+          ['documents', 'Documents'],
+          ['signatures', 'Digital Signatures'],
+          ['whatsapp', 'WhatsApp Collections'],
+          ['arrears', 'Arrears Engine'],
+          ['analytics', 'Analytics'],
+          ['exports', 'Exports'],
+          ...(isAdmin ? [['staff', 'Staff Management']] : [])
+        ].map(([key, label]) => (
+          <button key={key} onClick={() => setActiveTab(key)} style={activeTab === key ? tabActive : tab}>{label}</button>
+        ))}
+      </nav>
 
       {activeTab === 'dashboard' && (
         <section style={card}>
@@ -1690,6 +1790,50 @@ export default function App() {
               })}
             </tbody>
           </table>
+        </section>
+      )}
+
+      {activeTab === 'exports' && isAdmin && (
+        <section style={card}>
+          <h2>Backup & Export System</h2>
+          <p style={smallText}>Admin-only CSV exports for client records and payment records. Use this for monthly backups.</p>
+
+          <div style={grid4}>
+            <Stat title="Client Records" value={clients.length} />
+            <Stat title="Export Logs" value={exportLogs.length} />
+            <Stat title="Total Collected" value={money(dashboard.totalCollected)} />
+            <Stat title="Outstanding" value={money(dashboard.outstanding)} />
+          </div>
+
+          <button style={primaryButton} onClick={exportClientsCSV}>Export Clients CSV</button>
+          <button style={goldButton} onClick={exportPaymentsCSV}>Export Payments CSV</button>
+          <button style={selectButton} onClick={loadExportLogs}>Refresh Export Logs</button>
+
+          <h3>Export History</h3>
+          <table style={table}>
+            <thead>
+              <tr>
+                <th>Export Type</th>
+                <th>Date</th>
+                <th>User ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {exportLogs.map(log => (
+                <tr key={log.id}>
+                  <td>{log.export_type}</td>
+                  <td>{new Date(log.created_at).toLocaleString()}</td>
+                  <td>{log.user_id}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div style={summaryBox}>
+            <h3>Backup Recommendation</h3>
+            <p>Export clients and payments at least once per month.</p>
+            <p>Store backup files in a secure encrypted folder or trusted cloud storage with restricted access.</p>
+          </div>
         </section>
       )}
 
@@ -2072,25 +2216,6 @@ export default function App() {
     </div>
   )
 }
-function MenuGroup({ title, children }) {
-  return (
-    <div style={menuGroup}>
-      <p style={menuTitle}>{title}</p>
-      <div style={menuButtons}>{children}</div>
-    </div>
-  )
-}
-
-function TabButton({ name, label, activeTab, setActiveTab }) {
-  return (
-    <button
-      onClick={() => setActiveTab(name)}
-      style={activeTab === name ? tabActive : tab}
-    >
-      {label}
-    </button>
-  )
-}
 
 function Field({ label, value, onChange, type = 'text' }) {
   return (
@@ -2277,31 +2402,3 @@ const signatureBox = { background: '#fff2cc', padding: 18, borderRadius: 15, mar
 const signatureCanvas = { width: '100%', maxWidth: 650, height: 220, background: 'white', border: '2px solid #063d27', borderRadius: 10, touchAction: 'none' }
 const signaturePreview = { width: 180, height: 70, objectFit: 'contain', background: 'white', border: '1px solid #ccc', borderRadius: 8 }
 const textarea = { marginTop: 6, marginBottom: 12, padding: 12, borderRadius: 8, border: '1px solid #ccc', fontFamily: 'Arial', fontSize: 14 }
-const menuWrap = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-  gap: 15,
-  marginTop: 20
-}
-
-const menuGroup = {
-  background: 'white',
-  border: '1px solid #ddd',
-  borderRadius: 14,
-  padding: 12,
-  boxShadow: '0 2px 6px rgba(0,0,0,0.05)'
-}
-
-const menuTitle = {
-  margin: '0 0 10px 0',
-  fontSize: 13,
-  fontWeight: 'bold',
-  color: '#063d27',
-  textTransform: 'uppercase'
-}
-
-const menuButtons = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: 8
-}
