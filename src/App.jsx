@@ -717,8 +717,7 @@ export default function App() {
   }
 
   function downloadCSV(filename, rows) {
-    const csv = rows.map(row => row.map(csvEscape).join(',')).join('
-')
+  const csv = rows.map(row => row.map(csvEscape).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
