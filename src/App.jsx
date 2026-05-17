@@ -597,6 +597,7 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [clients, setClients] = useState([])
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [wizardStep, setWizardStep] = useState(1)
   const [selectedClientNo, setSelectedClientNo] = useState('')
   const [loading, setLoading] = useState(false)
 
